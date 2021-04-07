@@ -1,0 +1,64 @@
+# Copyright 2021 pguimaraes
+# See LICENSE file for licensing details.
+#
+# This is only an example, and you should edit to suit your needs.
+# If you don't need config, you can remove the file entirely.
+# 
+# options:
+#   thing:
+#     default: 🎁
+#     description: A thing used by the charm.
+#     type: string
+options:
+  distro:
+    default: 'confluent'
+    type: string
+    description: |
+      Only two values possible: apache or confluent. Defines if will use apache kafka
+      or confluent distro to install kafka packages. Both distro and version
+      should be set.
+  version:
+    default: '6.1'
+    type: string
+    description: |
+      Sets the kafka version for the given distro.
+  keystore-path:
+    default: ''
+    type: string
+    description: |
+      Path to the keystore
+  truststore-path:
+    default: ''
+    type: string
+    description: |
+      Path to the truststore
+  regenerate-keystore-truststore:
+    default: False
+    type: boolean
+    description: |
+      If set to True, force charm to regenerate trust and keystore
+  ssl_ca:
+    default: ''
+    type: string
+    description: |
+      CA certificate chain in base64
+  ssl_cert:
+    default: ''
+    type: string
+    description: |
+      Certificate with CA certificate chain to be used in base64
+  ssl_key:
+    default: ''
+    type: string
+    description: |
+      Key to be used in base64
+  kafka-broker-user: 
+    default: 'cp-kafka'
+    type: string
+    description: |
+      User set for kafka broker services
+  kafka-broker-group: 
+    default: 'confluent'
+    type: string
+    description: |
+      Group set for kafka broker services
