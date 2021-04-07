@@ -22,6 +22,12 @@ options:
     type: string
     description: |
       Sets the kafka version for the given distro.
+  install-method:
+    default: 'package'
+    type: string
+    description: |
+      There are two possible values: package or archive. If archive, it will upload the tarball set
+      in the resource of this charm. Archive method is EXPERIMENTAL for this charm.
   keystore-path:
     default: ''
     type: string
@@ -62,3 +68,72 @@ options:
     type: string
     description: |
       Group set for kafka broker services
+  kafka-broker-service-environment-overrides:
+    type: string
+    description:
+    default: |
+      - 
+  kafka-broker-sysctl:
+    type: string
+    description: |
+      YAML formatted set of options to be used for sysctl
+    default: |
+      - vm.swappiness: 1
+      - vm.dirty_background_ratio: 5
+      - vm.dirty_ratio: 80
+  archive-service-unit-overrides:
+    default: ''
+    type: string
+    description: |
+      YAML formatted set of key-value items to be added to the service file.
+      Overrides the [Unit] section.
+  archive-service-overrides:
+    default:  ''
+    type: string
+    description: |
+      YAML formatted set of key-value for [Service] section.
+  archive-service-environment-overrides:
+    type: string
+    description: |
+      YAML formatted set of key-value to set as environment variables for the service.
+    default: |
+      - KAFKA_HEAP_OPTS: "-Xms6g -Xmx6g -XX:MetaspaceSize=96m -XX:+UseG1GC -XX:MaxGCPauseMillis=20 -XX:InitiatingHeapOccupancyPercent=35 -XX:G1HeapRegionSize=16M -XX:MinMetaspaceFreeRatio=50 -XX:MaxMetaspaceFreeRatio=80"
+  java_extra_args:
+    type: string
+    description: |
+      Space-separated list of options to the JVM
+    default: ''
+  customize-failure-domain:
+    type: boolean
+    default: false
+    description: |
+      Setting this to true will tell Kafka to replicate across Juju's
+      Availability Zone instead of specifically by host.
+  replication-factor:
+    type: int
+    default: 3
+    description: |
+      Number of replicas to be distributed across brokers or AZs. 
+      Charm will block if replication-factor > num brokers / AZs
+  server-properties:
+    type: string
+    description: |
+      YAML formatted list of server properties to be passed to the charm
+    default:
+      - group.initial.rebalance.delay.ms: 3000
+      - log.retention.check.interval.ms: 300000
+      - log.retention.hours: 168
+      - log.segment.bytes: 1073741824
+      - num.io.threads: 16
+      - num.network.threads: 8
+      - num.partitions: 1
+      - num.recovery.threads.per.data.dir: 2
+      - socket.receive.buffer.bytes: 102400
+      - socket.request.max.bytes: 104857600
+      - socket.send.buffer.bytes: 102400
+      - zookeeper.connection.timeout.ms: 18000
+      - confluent.ansible.managed: true
+      - confluent.license.topic: _confluent-license
+      - confluent.support.metrics.enable: true
+      - confluent.support.customer.id: anonymous
+      

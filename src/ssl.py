@@ -26,9 +26,9 @@ def RegisterIfTruststoreExists(path):
 def SetTrustAndKeystoreFilePermissions(user, group, keystore_path,
                                        truststore_path):
     shutil.chown(keystore_path, user=user, group=group)
-    os.chmod(keystore_path, 640)
+    os.chmod(keystore_path, 0o640)
     shutil.chown(truststore_path, user=user, group=group)
-    os.chmod(truststore_path, 640)
+    os.chmod(truststore_path, 0o640)
 
 
 def SetCertAndKeyFilePermissions(user, group,
@@ -36,11 +36,11 @@ def SetCertAndKeyFilePermissions(user, group,
                                  cert_path,
                                  key_path):
     shutil.chown(ca_cert_path, user=user, group=group)
-    os.chmod(ca_cert_path, 640)
+    os.chmod(ca_cert_path, 0o640)
     shutil.chown(cert_path, user=user, group=group)
-    os.chmod(cert_path, 640)
+    os.chmod(cert_path, 0o640)
     shutil.chown(key_path, user=user, group=group)
-    os.chmod(key_path, 640)
+    os.chmod(key_path, 0o640)
 
 
 def PKCS12CreateKeystore(kestore_path, keystore_pwd, ssl_cert, ssl_key):
