@@ -1,14 +1,5 @@
 # Copyright 2021 pguimaraes
 # See LICENSE file for licensing details.
-#
-# This is only an example, and you should edit to suit your needs.
-# If you don't need config, you can remove the file entirely.
-# 
-# options:
-#   thing:
-#     default: 🎁
-#     description: A thing used by the charm.
-#     type: string
 options:
   distro:
     default: 'confluent'
@@ -43,6 +34,11 @@ options:
     type: boolean
     description: |
       If set to True, force charm to regenerate trust and keystore
+  ssl_mutual_auth_enabled:
+    default: False
+    type: boolean
+    description: |
+      EXPERIMENTAL: this setting is still not enabled by default
   ssl_ca:
     default: ''
     type: string
@@ -68,12 +64,7 @@ options:
     type: string
     description: |
       Group set for kafka broker services
-  kafka-broker-service-environment-overrides:
-    type: string
-    description:
-    default: |
-      - 
-  kafka-broker-sysctl:
+  sysctl:
     type: string
     description: |
       YAML formatted set of options to be used for sysctl
@@ -81,6 +72,21 @@ options:
       - vm.swappiness: 1
       - vm.dirty_background_ratio: 5
       - vm.dirty_ratio: 80
+  listeners:
+    type: string
+    description: |
+      YAML formatted listeners to be added to this deployment.
+      Listeners 'internal', 'external' and 'controller' are set by default.
+      Format:
+        <listener-name>:  <IP / FQDN>:PORT
+        <listener-name2>: endpoint:port 
+        ...
+    default: ''
+  listener-sasl-protocol:
+    type: boolean
+    default: False
+    description: |
+      EXPERIMENTAL: to be coded later
   archive-service-unit-overrides:
     default: ''
     type: string
@@ -115,6 +121,8 @@ options:
     description: |
       Number of replicas to be distributed across brokers or AZs. 
       Charm will block if replication-factor > num brokers / AZs
+  log.dirs:
+    type: string
   server-properties:
     type: string
     description: |
@@ -136,4 +144,10 @@ options:
       - confluent.license.topic: _confluent-license
       - confluent.support.metrics.enable: true
       - confluent.support.customer.id: anonymous
+      log.dirs: "{{ kafka_broker.datadir | join(',') }}"
+      listener.security.protocol.map: "{% for listener in kafka_broker_listeners|dict2items %}{% if loop.index > 1%},{% endif %}{{ listener['value']['name'] }}:{{ listener['value'] | kafka_protocol_defaults(ssl_enabled, sasl_protocol)}}{% endfor %}"
+      listeners: "{% for listener in kafka_broker_listeners|dict2items %}{% if loop.index > 1%},{% endif %}{{ listener['value']['name'] }}://:{{ listener['value']['port'] }}{% endfor %}"
+      advertised.listeners: "{% for listener in kafka_broker_listeners|dict2items %}{% if loop.index > 1%},{% endif %}{{ listener['value']['name'] }}://{{ listener['value']['hostname'] | default(inventory_hostname) }}:{{ listener['value']['port'] }}{% endfor %}"
+      inter.broker.listener.name: "{{kafka_broker_listeners[kafka_broker_inter_broker_listener_name]['name']}}"
+      kafka.rest.enable: "{{kafka_broker_rest_proxy_enabled|string|lower}}"
       

@@ -1,6 +1,6 @@
 from ops.framework import Object, StoredState
 
-
+# TODO: Generate the: zookeeper-tls-client.properties.j2
 class ZookeeperRelation(Object):
 
     state = StoredState()

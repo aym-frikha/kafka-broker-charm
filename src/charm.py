@@ -144,7 +144,22 @@ class KafkaBrokerCharm(CharmBase):
             server_props["confluent.metadata.topic.replication.factor"] = replication_factor
             server_props["confluent.balancer.topic.replication.factor"] = replication_factor
         server_props["zookeeper.connect"] = self.zk.get_zookeeper_list
+        server_props = { **server_props, **self.cluster.listeners }
+        # TODO: Enable rest proxy if we have RBAC: https://github.com/confluentinc/cp-ansible/blob/b711fc9e3b43d2069a9ac8b13177e7f2a07c7bfb/VARIABLES.md
+        server_props["kafka_broker_rest_proxy_enabled"] = False
+        render(source="server.properties.j2",
+               target="/etc/kafka/server.properties",
+               user=self.config.get('kafka-broker-user'),
+               group=self.config.get("kafka-broker-group"),
+               perms=0o640,
+               context={
+                   "server_props": server_props
+               })
 
+    def _generate_client_properties(self):
+        # TODO: it seems we need this just when it comes to client encryption
+        # https://github.com/confluentinc/cp-ansible/blob/b711fc9e3b43d2069a9ac8b13177e7f2a07c7bfb/roles/confluent.variables/filter_plugins/filters.py#L159
+        pass
 
     def _on_config_changed(self, _):
         # Note: you need to uncomment the example in the config.yaml file for this to work (ensure
