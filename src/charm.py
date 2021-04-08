@@ -17,23 +17,22 @@ import yaml
 from ops.charm import CharmBase
 from ops.main import main
 from ops.framework import StoredState
+
+from charmhelpers.fetch import (
+    apt_update,
+    add_source,
+    apt_install
+)
 from charmhelpers.core import render
 from charmhelpers.core.hookenv import (
     is_leader
 )
 
+from java import KafkaJavaCharmBase
 from cluster import KafkaBrokerCluster
-from zookeeper import ZookeeperRelation
+from zookeeper import ZookeeperRequiresRelation
 
 logger = logging.getLogger(__name__)
-
-OPENJDK11_PACKAGES = [
-    'openjdk-11-jre-headless'
-]
-
-PREREQS_PACKAGES = OPENJDK11_PACKAGES + [
-    'openssl',
-]
 
 # Given: https://docs.confluent.io/current/installation/cp-ansible/ansible-configure.html
 # Setting confluent-server by default
@@ -50,16 +49,10 @@ CONFLUENT_PACKAGES = [
   "confluent-security",
 ]
 
-LATEST_VERSION_CONFLUENT = "6.1"
-
 KAFKA_BROKER_SERVICE_TARGET="/lib/systemd/system/{}.service"
 
-class KafkaBrokerCharm(CharmBase):
+class KafkaBrokerCharm(KafkaJavaCharmBase):
     """Charm the service."""
-
-    @property
-    def distro(self):
-        return self.options.get("distro","").lower()
 
     def _install_tarball(self):
         # Use _generate_service_files here
@@ -99,26 +92,23 @@ class KafkaBrokerCharm(CharmBase):
 
     def __init__(self, *args):
         super().__init__(*args)
+        self.framework.observe(self.on.config_changed, self._on_install)
         self.framework.observe(self.on.config_changed, self._on_config_changed)
-        self.framework.observe(self.on.fortune_action, self._on_fortune_action)
         self.cluster = KafkaBrokerCluster(self, 'cluster')
-        self.zk = ZookeeperRelation(self, 'zookeeper')
+        self.zk = ZookeeperRequiresRelation(self, 'zookeeper')
 
     def _on_install(self, _):
+        # TODO: Create /var/lib/kafka folder and all log dirs, set permissions
+        packages = []
         if self.config.get("install_method") == "archive":
             self._install_tarball()
-            return
-        version = self.config.get("version", LATEST_VERSION_CONFLUENT)
-        if self.distro == "confluent":
-            key = subprocess.check_output(['wget', '-qO','-',
-                                           'https://packages.confluent.io/deb/{}/archive.key'.format(version)])
-            apt_source(
-                'deb [arch=amd64] https://packages.confluent.io/deb/{} stable main'.format(version),
-                key=key)
-            apt_install(CONFLUENT_PACKAGES)
-        elif self.distro == "apache":
-            raise Exception("Not Implemented Yet")
-        # TODO: Create /var/lib/kafka folder and all log dirs, set permissions
+        else:
+            if self.distro == "confluent":
+                packages = CONFLUENT_PACKAGES
+            else:
+                raise Exception("Not Implemented Yet"
+            super().install_packages('openjdk-11-headless', packages)
+        self._on_config_changed()
 
 
     def _rel_get_remote_units(self, rel_name):
@@ -169,14 +159,6 @@ class KafkaBrokerCharm(CharmBase):
         self._generate_server_properties()
         # Apply sysctl
 
-    def _on_fortune_action(self, event):
-        # Note: you need to uncomment the example in the actions.yaml file for this to work (ensure
-        # to not just leave the example, but adapt to your needs for actions commands)
-        fail = event.params["fail"]
-        if fail:
-            event.fail(fail)
-        else:
-            event.set_results({"fortune": "A bug in the code is worth two in the documentation."})
 
 
 if __name__ == "__main__":

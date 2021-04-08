@@ -1,3 +1,5 @@
 -r requirements.txt
 coverage
+coverage
 flake8
+stestr>=2.2.0
