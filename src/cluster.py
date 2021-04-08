@@ -84,7 +84,7 @@ class KafkaBrokerCluster(Object):
     def peer_addresses(self):
         addresses = []
         for u in self._relation.units:
-            addresses.append(self._relation.data[u]['ingress-address'])
+            addresses.append(self._relation.data[u]["ingress-address"]
         return addresses
 
     @property

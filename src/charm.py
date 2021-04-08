@@ -2,14 +2,6 @@
 # Copyright 2021 pguimaraes
 # See LICENSE file for licensing details.
 
-"""Charm the service.
-
-Refer to the following post for a quick-start guide that will help you
-develop a new k8s charm using the Operator Framework:
-
-    https://discourse.charmhub.io/t/4208
-"""
-
 import subprocess
 import logging
 import yaml
@@ -17,6 +9,7 @@ import yaml
 from ops.charm import CharmBase
 from ops.main import main
 from ops.framework import StoredState
+from ops.model import MaintenanceStatus, ActiveStatus
 
 from charmhelpers.fetch import (
     apt_update,
@@ -116,9 +109,7 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
 
     def _generate_server_properties(self):
         # TODO: set confluent.security.event.logger.exporter.kafka.topic.replicas
-        server_props = yaml.safe_load(self.config.get("server-properties", ""))
-        if server_props == None:
-            server_propos = {}
+        server_props = yaml.safe_load(self.config.get("server-properties", "")) or {}
         if os.environ.get("JUJU_AVAILABILITY_ZONE") and self.config["customize-failure-domain"]:
             server_props["broker.rack"] = os.environ.get("JUJU_AVAILABILITY_ZONE")
         replication_factor = self.config.get("replication-factor",3)

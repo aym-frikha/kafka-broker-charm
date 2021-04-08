@@ -11,7 +11,7 @@ class ZookeeperRelation(Object):
     def __init__(self, charm, relation_name):
         super().__init__(charm, relation_name)
         self._charm = charm
-        self._unit = unit
+        self._unit = charm.unit
         self._relation_name = relation_name
         self._relation = self.framework.model.get_relation(self._relation_name)
         self.state.set_default(zk_list="")
@@ -51,6 +51,7 @@ class ZookeeperProvidesRelation(ZookeeperRelation):
         self._port = port
 
     def on_zookeeper_relation_joined(self, event):
+        # Get unit's own hostname and pass that via relation
         self._relations[self._unit]["endpoint"] = \
             "{}:{}".format(get_hostname(self.advertise_addr),
                            self._port)
