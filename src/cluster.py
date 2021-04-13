@@ -118,6 +118,8 @@ class KafkaBrokerCluster(Object):
         pass
 
     def on_cluster_relation_changed(self, event):
+        self._get_all_tls_certs()
+
         if os.environ.get("JUJU_AVAILABILITY_ZONE"):
             self._relation.data[self.charm.unit]["az"] = os.environ.get("JUJU_AVAILABILITY_ZONE")
         az_set = set()

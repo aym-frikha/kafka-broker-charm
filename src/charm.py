@@ -4,6 +4,7 @@
 
 import subprocess
 import logging
+import os
 import yaml
 
 from ops.charm import CharmBase
@@ -16,7 +17,7 @@ from charmhelpers.fetch import (
     add_source,
     apt_install
 )
-from charmhelpers.core import render
+from charmhelpers.core.templating import render
 from charmhelpers.core.hookenv import (
     is_leader
 )
@@ -90,7 +91,7 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         self.zk = ZookeeperRequiresRelation(self, 'zookeeper')
         self.ks.set_default(zk_cert="")
         self.ks.set_default(zk_key="")
-        os.makedirs("/var/ssl/private")
+        os.makedirs("/var/ssl/private", exist_ok=True)
         self._generate_keystores()
 
     def _create_log_dirs(self):
@@ -105,30 +106,23 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
                 # folder already exists
                 pass
 
+    @property
+    def unit_folder(self):
+        # Using as a method so we can also mock it on unit tests
+        return os.getenv("JUJU_CHARM_DIR")
+
     def _generate_keystores(self):
         if self.config["generate-root-ca"]:
-            generateSelfSigned("/var/lib",
+            generateSelfSigned(self.unit_folder,
                                certname="zk-kafka-broker-root-ca",
                                user=self.config["user"],
                                group=self.config["group"],
                                mode=0o640)
-            with open("/var/lib/zk-kafka-broker-root-ca.crt", "r") as f:
-                self.ks.zk_cert = f.read()
-                f.close()
-            with open("/var/lib/zk-kafka-broker-root-ca.key", "r") as f:
-                self.ks.zk_key = f.read()
-                f.close()
-            generateSelfSigned("/var/lib",
+            generateSelfSigned(self.unit_folder,
                                certname="ssl-kafka-broker-root-ca",
                                user=self.config["user"],
                                group=self.config["group"],
                                mode=0o640)
-            with open("/var/lib/ssl-kafka-broker-root-ca.crt", "r") as f:
-                self.ks.ssl_cert = f.read()
-                f.close()
-            with open("/var/lib/ssl-kafka-broker-root-ca.key", "r") as f:
-                self.ks.ssl_key = f.read()
-                f.close()
         else:
             # Certs already set either as configs or certificates relation
             self.ks.zk_cert  = get_zk_cert()
@@ -137,24 +131,36 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
             self.ks.ssl_key  = get_ssl_key()
         self.ks.ks_zookeeper_pwd = genRandomPassword()
         self.ks.ts_zookeeper_pwd = genRandomPassword()
-        PKCS12CreateKeystore(
-            self.config.get("keystore-zookeeper-path",
-                            "/var/ssl/private/kafka_zookeeper_ks.jks"),
-            self.ks.ks_zookeeper_pwd,
-            self.get_zk_cert(),
-            self.get_zk_key(),
-            user=self.config["user"],
-            group=self.config["group"],
-            mode=0o640)
-        PKCS12CreateKeystore(
-            self.config.get("keystore-path",
-                            "/var/ssl/private/kafka_ssl_ks.jks"),
-            self.ks.ks_password,
-            self.get_ssl_cert(),
-            self.get_ssl_key(),
-            user=self.config["user"],
-            group=self.config["group"],
-            mode=0o640)
+        if len(self.ks.zk_cert) > 0 and \
+           len(self.ks.zk_key) > 0:
+            filename = genRandomPassword(6)
+            PKCS12CreateKeystore(
+                self.config.get("keystore-zookeeper-path",
+                                "/var/ssl/private/kafka_zookeeper_ks.jks"),
+                self.ks.ks_zookeeper_pwd,
+                self.get_zk_cert(),
+                self.get_zk_key(),
+                user=self.config["user"],
+                group=self.config["group"],
+                mode=0o640,
+                openssl_chain_path="/tmp/" + filename + ".chain",
+                openssl_key_path="/tmp/" + filename + ".key",
+                openssl_p12_path="/tmp/" + filename + ".p12")
+        if len(self.ks.ssl_cert) > 0 and \
+           len(self.ks.ssl_key) > 0:
+            filename = genRandomPassword(6)
+            PKCS12CreateKeystore(
+                self.config.get("keystore-path",
+                                "/var/ssl/private/kafka_ssl_ks.jks"),
+                self.ks.ks_password,
+                self.get_ssl_cert(),
+                self.get_ssl_key(),
+                user=self.config["user"],
+                group=self.config["group"],
+                mode=0o640,
+                openssl_chain_path="/tmp/" + filename + ".chain",
+                openssl_key_path="/tmp/" + filename + ".key",
+                openssl_p12_path="/tmp/" + filename + ".p12")
 
     def _on_install(self, _):
         # TODO: Create /var/lib/kafka folder and all log dirs, set permissions
