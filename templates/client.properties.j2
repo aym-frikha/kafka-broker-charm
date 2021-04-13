@@ -1,0 +1,4 @@
+# A set of client properties against the broker listener for kafka health checks
+{% for key, value in client_props %}
+{{key}}={{value}}
+{% endfor %}

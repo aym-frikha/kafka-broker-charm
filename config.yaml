@@ -29,6 +29,16 @@ options:
     type: string
     description: |
       Path to the truststore
+  keystore-zookeeper-path:
+    default: "/var/ssl/private/kafka_zookeeper_ks.jks"
+    type: string
+    description: |
+      Path to the keystore for zookeeper
+  truststore-zookeeper-path:
+    default: "truststore-zookeeper-path"
+    type: string
+    description: |
+      Path to the truststore for zookeeper
   regenerate-keystore-truststore:
     default: False
     type: boolean
@@ -39,27 +49,68 @@ options:
     type: boolean
     description: |
       EXPERIMENTAL: this setting is still not enabled by default
-  ssl_ca:
+  generate-root-ca:
+    default: False
+    type: boolean
+    description: |
+      If set, generate self-signed certificates to replace ssl* configs.
+  ssl-zk-cert:
     default: ''
     type: string
     description: |
-      CA certificate chain in base64
+      Certificate for Zookeeper relation.
+      Certificate with CA certificate chain to be used in base64
+      -----BEGIN CERTIFICATE-----
+      <Primary cert in PEM format for your-domain>
+      -----END CERTIFICATE-----
+      -----BEGIN CERTIFICATE-----
+      <First intermediate CA certificate>
+      -----END CERTIFICATE-----
+      . . . . .
+      (there may be more than one intermediate cert)
+      . . . . .
+      -----BEGIN CERTIFICATE-----
+      <root-ca>
+      -----END CERTIFICATE-----
+      Pass the file with the certificate chain above as:
+      $ juju config <your-charm> ssl_cert="$(cat <crt file> | base64 -w0)"
+      Or in the bundle, using: include-base64://<path to crt file>
+  ssl-zk-key:
+    default: ''
+    type: string
+    description: |
+      Key to be used in base64
   ssl_cert:
     default: ''
     type: string
     description: |
       Certificate with CA certificate chain to be used in base64
+      -----BEGIN CERTIFICATE-----
+      <Primary cert in PEM format for your-domain>
+      -----END CERTIFICATE-----
+      -----BEGIN CERTIFICATE-----
+      <First intermediate CA certificate>
+      -----END CERTIFICATE-----
+      . . . . .
+      (there may be more than one intermediate cert)
+      . . . . .
+      -----BEGIN CERTIFICATE-----
+      <root-ca>
+      -----END CERTIFICATE-----
+      Pass the file with the certificate chain above as:
+      $ juju config <your-charm> ssl_cert="$(cat <crt file> | base64 -w0)"
+      Or in the bundle, using: include-base64://<path to crt file>
   ssl_key:
     default: ''
     type: string
     description: |
       Key to be used in base64
-  kafka-broker-user: 
+  user: 
     default: 'cp-kafka'
     type: string
     description: |
       User set for kafka broker services
-  kafka-broker-group: 
+  group: 
     default: 'confluent'
     type: string
     description: |
@@ -87,23 +138,23 @@ options:
     default: False
     description: |
       EXPERIMENTAL: to be coded later
-  archive-service-unit-overrides:
+  service-unit-overrides:
     default: ''
     type: string
     description: |
-      YAML formatted set of key-value items to be added to the service file.
+      YAML formatted set of key-value items to be added to the override.conf.
       Overrides the [Unit] section.
-  archive-service-overrides:
-    default:  ''
+  service-overrides:
     type: string
     description: |
       YAML formatted set of key-value for [Service] section.
-  archive-service-environment-overrides:
+    default: ''
+  service-environment-overrides:
     type: string
     description: |
       YAML formatted set of key-value to set as environment variables for the service.
     default: |
-      - KAFKA_HEAP_OPTS: "-Xms6g -Xmx6g -XX:MetaspaceSize=96m -XX:+UseG1GC -XX:MaxGCPauseMillis=20 -XX:InitiatingHeapOccupancyPercent=35 -XX:G1HeapRegionSize=16M -XX:MinMetaspaceFreeRatio=50 -XX:MaxMetaspaceFreeRatio=80"
+      KAFKA_HEAP_OPTS: "-Xms6g -Xmx6g -XX:MetaspaceSize=96m -XX:+UseG1GC -XX:MaxGCPauseMillis=20 -XX:InitiatingHeapOccupancyPercent=35 -XX:G1HeapRegionSize=16M -XX:MinMetaspaceFreeRatio=50 -XX:MaxMetaspaceFreeRatio=80"
   java_extra_args:
     type: string
     description: |
@@ -121,33 +172,52 @@ options:
     description: |
       Number of replicas to be distributed across brokers or AZs. 
       Charm will block if replication-factor > num brokers / AZs
+  cluster-domain:
+    type: string
+    default: ''
+    description: |
+      If set, hostname to be used on zookeeper relation will be:
+      $(hosname).<cluster-domain>
+      Otherwise, charm will use reverse DNS to try resolve a valid hostname for the binding address
+      of the relation.
+  zookeeper-domain:
+    type: string
+    default: ''
+    description: |
+      If set, hostname to be used on zookeeper relation will be:
+      $(hosname).<zookeeper-domain>
+      Otherwise, charm will use reverse DNS to try resolve a valid hostname for the binding address
+      of the relation.
+  client-properties:
+    type: string
+    description: |
+      YAML formatted list of options for client.properties file
+    default:
+      default.api.timeout.ms: 20000
+      request.timeout.ms: 20000
   log.dirs:
     type: string
+    default: "/var/lib/kafka-data"
+    description: |
+      Comma-separated list of folders in which kafka stores messages in log-appended files
   server-properties:
     type: string
     description: |
       YAML formatted list of server properties to be passed to the charm
     default:
-      - group.initial.rebalance.delay.ms: 3000
-      - log.retention.check.interval.ms: 300000
-      - log.retention.hours: 168
-      - log.segment.bytes: 1073741824
-      - num.io.threads: 16
-      - num.network.threads: 8
-      - num.partitions: 1
-      - num.recovery.threads.per.data.dir: 2
-      - socket.receive.buffer.bytes: 102400
-      - socket.request.max.bytes: 104857600
-      - socket.send.buffer.bytes: 102400
-      - zookeeper.connection.timeout.ms: 18000
-      - confluent.ansible.managed: true
-      - confluent.license.topic: _confluent-license
-      - confluent.support.metrics.enable: true
-      - confluent.support.customer.id: anonymous
-      log.dirs: "{{ kafka_broker.datadir | join(',') }}"
-      listener.security.protocol.map: "{% for listener in kafka_broker_listeners|dict2items %}{% if loop.index > 1%},{% endif %}{{ listener['value']['name'] }}:{{ listener['value'] | kafka_protocol_defaults(ssl_enabled, sasl_protocol)}}{% endfor %}"
-      listeners: "{% for listener in kafka_broker_listeners|dict2items %}{% if loop.index > 1%},{% endif %}{{ listener['value']['name'] }}://:{{ listener['value']['port'] }}{% endfor %}"
-      advertised.listeners: "{% for listener in kafka_broker_listeners|dict2items %}{% if loop.index > 1%},{% endif %}{{ listener['value']['name'] }}://{{ listener['value']['hostname'] | default(inventory_hostname) }}:{{ listener['value']['port'] }}{% endfor %}"
-      inter.broker.listener.name: "{{kafka_broker_listeners[kafka_broker_inter_broker_listener_name]['name']}}"
-      kafka.rest.enable: "{{kafka_broker_rest_proxy_enabled|string|lower}}"
+      group.initial.rebalance.delay.ms: 3000
+      log.retention.check.interval.ms: 300000
+      log.retention.hours: 168
+      log.segment.bytes: 1073741824
+      num.io.threads: 16
+      num.network.threads: 8
+      num.partitions: 1
+      num.recovery.threads.per.data.dir: 2
+      socket.receive.buffer.bytes: 102400
+      socket.request.max.bytes: 104857600
+      socket.send.buffer.bytes: 102400
+      zookeeper.connection.timeout.ms: 18000
+      confluent.license.topic: _confluent-license
+      confluent.support.metrics.enable: true
+      confluent.support.customer.id: anonymous
       
