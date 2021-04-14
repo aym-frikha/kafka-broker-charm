@@ -155,11 +155,6 @@ options:
       YAML formatted set of key-value to set as environment variables for the service.
     default: |
       KAFKA_HEAP_OPTS: "-Xms6g -Xmx6g -XX:MetaspaceSize=96m -XX:+UseG1GC -XX:MaxGCPauseMillis=20 -XX:InitiatingHeapOccupancyPercent=35 -XX:G1HeapRegionSize=16M -XX:MinMetaspaceFreeRatio=50 -XX:MaxMetaspaceFreeRatio=80"
-  java_extra_args:
-    type: string
-    description: |
-      Space-separated list of options to the JVM
-    default: ''
   customize-failure-domain:
     type: boolean
     default: false
@@ -195,11 +190,27 @@ options:
     default:
       default.api.timeout.ms: 20000
       request.timeout.ms: 20000
+  data-log-device:
+    type: string
+    default: ""
+    description: |
+      Device to be used to store the data-log folder.
+      This value cannot be changed post deployment of a unit.
+      If unset, the folder will be created directly on the rootfs
+  fs-options:
+    type: string
+    description: |
+      Filesystem options for data-*-dir options.
+      This value cannot be changed post deployment of a unit.
   log.dirs:
     type: string
     default: "/var/lib/kafka-data"
     description: |
-      Comma-separated list of folders in which kafka stores messages in log-appended files
+      The list must be in the forme of:
+      log.dirs: |
+        <fs-type>: <folder-path>
+      Only the first folder will be taken into consideration. The <fs-type> is used by the charm
+      if log-device is also set.
   server-properties:
     type: string
     description: |
@@ -220,4 +231,5 @@ options:
       confluent.license.topic: _confluent-license
       confluent.support.metrics.enable: true
       confluent.support.customer.id: anonymous
-      
+      super.users: User:mds;User:HTTP
+

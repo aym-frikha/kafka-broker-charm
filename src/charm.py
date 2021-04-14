@@ -2,6 +2,7 @@
 # Copyright 2021 pguimaraes
 # See LICENSE file for licensing details.
 
+import base64
 import subprocess
 import logging
 import os
@@ -11,6 +12,7 @@ from ops.charm import CharmBase
 from ops.main import main
 from ops.framework import StoredState
 from ops.model import MaintenanceStatus, ActiveStatus
+from ops.model import BlockedStatus
 
 from charmhelpers.fetch import (
     apt_update,
@@ -22,13 +24,15 @@ from charmhelpers.core.hookenv import (
     is_leader
 )
 
-from wand.contrib.java import KafkaJavaCharmBase
-from cluster import KafkaBrokerCluster
+from wand.apps.kafka import KafkaJavaCharmBase
+from .cluster import KafkaBrokerCluster
 from wand.apps.relations.zookeeper import ZookeeperRequiresRelation
+from wand.security.ssl import genRandomPassword
 
 logger = logging.getLogger(__name__)
 
-# Given: https://docs.confluent.io/current/installation/cp-ansible/ansible-configure.html
+# Given: https://docs.confluent.io/current/ \
+#        installation/cp-ansible/ansible-configure.html
 # Setting confluent-server by default
 CONFLUENT_PACKAGES = [
   "confluent-common",
@@ -43,7 +47,6 @@ CONFLUENT_PACKAGES = [
   "confluent-security",
 ]
 
-KAFKA_BROKER_SERVICE_TARGET="/lib/systemd/system/{}.service"
 
 class KafkaBrokerCharm(KafkaJavaCharmBase):
 
@@ -51,65 +54,46 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         # Use _generate_service_files here
         raise Exception("Not Implemented Yet")
 
-    # From: https://github.com/confluentinc/cp-ansible/blob/b711fc9e3b43d2069a9ac8b13177e7f2a07c7bfb/roles/confluent.kafka_broker/defaults/main.yml#L10
-    def _collect_java_args(self):
-        java_args = ["-Djdk.tls.ephemeralDHKeySize=2048"] # We always use broker listeners
-        ## TODO: if JMX Exporter relation, then we should have: -javaagent:{{jmxexporter_jar_path}}={{kafka_broker_jmxexporter_port}}:{{kafka_broker_jmxexporter_config_path}}
-        ## TODO: If GSSAPI or SASL enabled, check the extra parameters
-        java_args = java_args + self.config.get("java_extra_args","").split()
-        return java_args
-
-    # Used for the archive install_method
-    def _generate_service_files(self):
-        kafka_broker_service_unit_overrides = yaml.safe_load(
-            self.config.get('service-unit-overrides',""))
-        kafka_broker_service_overrides = yaml.safe_load(
-            self.config.get('service-overrides',""))
-        kafka_broker_service_environment_overrides = yaml.safe_load(
-            self.config.get('service-environment-overrides',""))
-        target = None
-        if self.distro == "confluent":
-            target = "/lib/systemd/system/confluent-server.service"
-        elif self.distro == "apache":
-            raise Exception("Not Implemented Yet")
-        render(source="kafka-broker.service.j2",
-               target=target,
-               user=self.config.get('user'),
-               group=self.config.get("group"),
-               perms=0o644,
-               context={
-                   "kafka_broker_service_unit_overrides": kafka_broker_service_unit_overrides,
-                   "kafka_broker_service_overrides": kafka_broker_service_overrides,
-                   "kafka_broker_service_environment_overrides": kafka_broker_service_environment_overrides
-               })
-
     def __init__(self, *args):
         super().__init__(*args)
-        self.framework.observe(self.on.config_changed, self._on_install)
+        self.framework.observe(self.on.install, self._on_install)
         self.framework.observe(self.on.config_changed, self._on_config_changed)
+        self.framework.observe(self.on.cluster_relation_joined,
+                               self._on_cluster_relation_joined)
+        self.framework.observe(self.on.cluster_relation_changed,
+                               self._on_cluster_relation_changed)
+        self.framework.observe(self.on.zookeeper_relation_joined,
+                               self._on_zookeeper_relation_joined)
+        self.framework.observe(self.on.zookeeper_relation_changed,
+                               self._on_zookeeper_relation_changed)
         self.cluster = KafkaBrokerCluster(self, 'cluster')
         self.zk = ZookeeperRequiresRelation(self, 'zookeeper')
         self.ks.set_default(zk_cert="")
         self.ks.set_default(zk_key="")
+        self.ks.set_default(ssl_cert="")
+        self.ks.set_default(ssl_key="")
         os.makedirs("/var/ssl/private", exist_ok=True)
         self._generate_keystores()
 
-    def _create_log_dirs(self):
-        for d in self.config.get("log.dirs","").split(","):
-            try:
-                self.create_log_dir(data_log_dev=None,
-                                    data_log_dir=d,
-                                    data_log_fs=None,
-                                    user=self.config["user"],
-                                    group=self.config["group"])
-            except:
-                # folder already exists
-                pass
+    def _on_cluster_relation_joined(self, event):
+        self.cluster.on_cluster_relation_joined(event)
+        self._on_config_changed(event)
 
-    @property
-    def unit_folder(self):
-        # Using as a method so we can also mock it on unit tests
-        return os.getenv("JUJU_CHARM_DIR")
+    def _on_cluster_relation_changed(self, event):
+        self.cluster.on_cluster_relation_changed(event)
+        self._on_config_changed(event)
+
+    def _on_zookeeper_relation_joined(self, event):
+        self.zk.user = self.config.get("user", "")
+        self.zk.group = self.config.get("group", "")
+        self.zk.mode = 0o640
+        self.zk.on_zookeeper_relation_joined(event)
+
+    def _on_zookeeper_relation_changed(self, event):
+        self.zk.user = self.config.get("user", "")
+        self.zk.group = self.config.get("group", "")
+        self.zk.mode = 0o640
+        self.zk.on_zookeeper_relation_changed(event)
 
     def _generate_keystores(self):
         if self.config["generate-root-ca"]:
@@ -125,10 +109,10 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
                                mode=0o640)
         else:
             # Certs already set either as configs or certificates relation
-            self.ks.zk_cert  = get_zk_cert()
-            self.ks.zk_key   = get_zk_key()
-            self.ks.ssl_cert = get_ssl_cert()
-            self.ks.ssl_key  = get_ssl_key()
+            self.ks.zk_cert = self.get_zk_cert()
+            self.ks.zk_key = self.get_zk_key()
+            self.ks.ssl_cert = self.get_ssl_cert()
+            self.ks.ssl_key = self.get_ssl_key()
         self.ks.ks_zookeeper_pwd = genRandomPassword()
         self.ks.ts_zookeeper_pwd = genRandomPassword()
         if len(self.ks.zk_cert) > 0 and \
@@ -171,8 +155,29 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
             if self.distro == "confluent":
                 packages = CONFLUENT_PACKAGES
             else:
-                raise Exception("Not Implemented Yet"
+                raise Exception("Not Implemented Yet")
             super().install_packages('openjdk-11-headless', packages)
+        # The logic below avoid an error such as more than one entry
+        # In this case, we will pick the first entry
+        data_log_fs = list(self.config["data-log-dir"].items())[0][0]
+        data_log_dir = list(self.config["data-log-dir"].items())[0][1]
+        self.create_log_dir(self.config["data-log-device"],
+                                      data_log_dir,
+                                      data_log_fs,
+                                      self.config.get("user",
+                                                      "cp-kafka"),
+                                      self.config.get("group",
+                                                      "confluent"),
+                                      self.config.get("fs-options", None))
+
+    def _check_if_ready(self):
+        if not self.cluster.is_ready:
+            BlockedStatus("Waiting for cluster relation")
+            return
+        if not service_running(self.service):
+            BlockedStatus("Service not running {}".format(self.service))
+            return
+        ActiveStatus("{} running".format(self.service))
 
     def _rel_get_remote_units(self, rel_name):
         return self.framework.model.get_relation(rel_name).units
@@ -188,43 +193,76 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         return base64.b64decode(self.config["ssl_key"]).decode("ascii")
 
     def get_zk_cert(self):
-        # TODO(pguimaraes): expand it to count with certificates relation or action cert/key
+        # TODO(pguimaraes): expand it to count
+        # with certificates relation or action cert/key
         if len(self.ks.zk_cert) > 0:
             return self.ks.zk_cert
-        return base64.b64decode(self.config["ssl-zk-cert"]).decode("ascii")
+        return base64.b64decode(
+                   self.config["ssl-zk-cert"]).decode("ascii")
 
     def get_zk_key(self):
-        # TODO(pguimaraes): expand it to count with certificates relation or action cert/key
+        # TODO(pguimaraes): expand it to count
+        # with certificates relation or action cert/key
         if len(self.ks.zk_key) > 0:
             return self.ks.zk_key
-        return base64.b64decode(self.config["ssl-zk-key"]).decode("ascii")
+        return base64.b64decode(
+                   self.config["ssl-zk-key"]).decode("ascii")
 
     def _generate_server_properties(self):
         # TODO: set confluent.security.event.logger.exporter.kafka.topic.replicas
         server_props = self.config.get("server-properties", "")
-        server_props["log.dirs"] = self.config["log.dirs"]
-        if os.environ.get("JUJU_AVAILABILITY_ZONE") and self.config["customize-failure-domain"]:
-            server_props["broker.rack"] = os.environ.get("JUJU_AVAILABILITY_ZONE")
+        server_props["log.dirs"] = \
+            list(yaml.safe_load(self.config.get("log.dirs",{})).items())[0][1]
+        if os.environ.get("JUJU_AVAILABILITY_ZONE", None) and \
+            self.config["customize-failure-domain"]:
+            server_props["broker.rack"] = \
+                os.environ.get("JUJU_AVAILABILITY_ZONE")
+        # Resolve replication factors
         replication_factor = self.config.get("replication-factor",3)
         server_props["offsets.topic.replication.factor"] = replication_factor
-        if replication_factor > self.cluster.num_peers or
-            (replication_factor > self.cluster.num_azs and self.config["customize-failure-domain"]):
-            BlockedStatus("Not enough brokers (or AZs, if customize-failure-domain is set)")
+        if replication_factor > self.cluster.num_peers or \
+            (replication_factor > self.cluster.num_azs and \
+             self.config["customize-failure-domain"]):
+            BlockedStatus("Not enough brokers " +
+                          "(or AZs, if customize-failure-domain is set)")
             return
-        server_props["transaction.state.log.min.isr"] = min(2, replication_factor)
-        server_props["transaction.state.log.replication.factor"] = replication_factor
-        if self.distro == "confluent":
-            server_props["confluent.license.topic.replication.factor"] = replication_factor
-            server_props["confluent.metadata.topic.replication.factor"] = replication_factor
-            server_props["confluent.balancer.topic.replication.factor"] = replication_factor
-        server_props["zookeeper.connect"] = self.zk.get_zookeeper_list
-        server_props = { **server_props, **self.cluster.listeners }
-        # TODO: Enable rest proxy if we have RBAC: https://github.com/confluentinc/cp-ansible/blob/b711fc9e3b43d2069a9ac8b13177e7f2a07c7bfb/VARIABLES.md
-        server_props["kafka_broker_rest_proxy_enabled"] = False
 
+        server_props["transaction.state.log.min.isr"] = \
+            min(2, replication_factor)
+        server_props["transaction.state.log.replication.factor"] = \
+            replication_factor
+        if self.distro == "confluent":
+            server_props["confluent.license.topic.replication.factor"] = \
+                replication_factor
+            server_props["confluent.metadata.topic.replication.factor"] = \
+                replication_factor
+            server_props["confluent.balancer.topic.replication.factor"] = \
+                replication_factor
+        server_props = { **server_props, **self.cluster.listener_opts }
+        # TODO: Enable rest proxy if we have RBAC:
+        # https://github.com/confluentinc/cp-ansible/blob/ \
+        #     b711fc9e3b43d2069a9ac8b13177e7f2a07c7bfb/VARIABLES.md
+        server_props["kafka_broker_rest_proxy_enabled"] = False
         # Zookeeper options:
-        server_props["zookeeper.connect"] = self.zk.get_zookeer_list
-        server_props["zookeeper.set.acl"] = zookeeper.clientCnxnSocket()
+        if self.get_zk_cert() and self.get_zk_key():
+            user, group = getCurrentUserAndGroup()
+            self.zk.user = self.config("user", user)
+            self.zk.group = self.config("group", group)
+            self.zk.mode = 0o640
+            self.zk.set_mTLS_auth(
+                self.get_zk_cert(),
+                self.config.get("truststore-zookeeper-path",
+                                "/var/ssl/private/kafka-broker-ts-zookeeper.jks"),
+                self.ks.ts_zookeeper_pwd)
+        if self.is_sasl_enabled():
+            if self.distro == "confluent":
+                server_props["authorizer.class.name"] = "io.confluent.kafka.security.authorizer.ConfluentServerAuthorizer"
+                server_props["confluent.authorizer.access.rule.providers"] = "CONFLUENT,ZK_ACL"
+            elif self.distro == "apache":
+                raise Exception("Not Implemented Yet")
+        server_props["zookeeper.connect"] = self.zk.get_zookeeper_list
+        server_props["zookeeper.set.acl"] = self.zk.is_sasl_enabled()
+
         if self.zk.is_mTLS_enabled():
             # TLS client properties uses the same variables
             # Rendering as a part of server properties
@@ -276,8 +314,6 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         return False
 
     def _generate_client_properties(self):
-        # TODO: it seems we need this just when it comes to client encryption
-        # https://github.com/confluentinc/cp-ansible/blob/b711fc9e3b43d2069a9ac8b13177e7f2a07c7bfb/roles/confluent.variables/filter_plugins/filters.py#L159
         client_props = self.config["client-properties"] or {}
         if self.is_sasl_enabled():
             client_props["sasl.jaas.config"] = self.config.get("sasl-jaas-config","")
@@ -302,44 +338,18 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
                    "client_props": client_props
                })
 
-#    def _generate_zk_tls_client_properties(self):
-#        client_props = {}
-#        if not self.zk.is_mTLS_enabled():
-#            return
-#        client_props["zookeeper.clientCnxnSocket"] = "org.apache.zookeeper.ClientCnxnSocketNetty"
-#        client_props["zookeeper.ssl.client.enable"] = "true"
-#        client_props["zookeeper.ssl.keystore.location"] = \
-#            self.config.get("keystore-zookeeper-path",
-#                            "/var/ssl/private/kafka_zookeeper_ks.jks")
-#        client_props["zookeeper.ssl.keystore.password"] = self.ks.ks_password
-#        client_props["zookeeper.ssl.truststore.location"] = \
-#            self.config.get("truststore-zookeeper-path",
-#                            "/var/ssl/private/kafka_zookeeper_ts.jks")
-#        client_props["zookeeper.ssl.truststore.password"] = self.ks.ts_password
-#        render(source="zookeeper-tls-client.properties.j2",
-#               target="/etc/kafka/zookeeper-tls-client.properties",
-#               user=self.config.get('user'),
-#               group=self.config.get("group"),
-#               perms=0o640,
-#               context={
-#                   "client_props": client_props
-#               })
-
-
     def _on_config_changed(self, _):
-        # Note: you need to uncomment the example in the config.yaml file for this to work (ensure
-        # to not just leave the example, but adapt to your configuration needs)
+        if self.distro == "confluent":
+            self.service = "confluent-server"
+        else:
+            self.service = "kafka"
         self._generate_keystores()
         self._generate_server_properties()
         self._generate_client_properties()
-#        self._generate_zk_tls_client_properties()
-        target = None
-        if self.distro == "confluent":
-            target = "/etc/systemd/system/" + \
-                     "confluent-server.service.d/override.conf"
-        elif self.distro == "apache":
-            raise Exception("Not Implemented Yet")
-        self.render_service_override_file(target)
+        self.render_service_override_file()
+        service_reload(self.service)
+        service_running(self.service)
+        self._check_if_ready()
         # Apply sysctl
 
 

@@ -1,5 +1,5 @@
 -r requirements.txt
-coverage
-coverage
-flake8
+coverage     
+flake8       
+mock         
 stestr>=2.2.0
