@@ -167,11 +167,27 @@ options:
     description: |
       Number of replicas to be distributed across brokers or AZs. 
       Charm will block if replication-factor > num brokers / AZs
-  cluster-domain:
+  internal-cluster-domain:
     type: string
     default: ''
     description: |
-      If set, hostname to be used on zookeeper relation will be:
+      If set, hostname to be used on the internal listener of the cluster relation will be:
+      $(hosname).<cluster-domain>
+      Otherwise, charm will use reverse DNS to try resolve a valid hostname for the binding address
+      of the relation.
+  client-cluster-domain:
+    type: string
+    default: ''
+    description: |
+      If set, hostname to be used on the external listener of the cluster relation will be:
+      $(hosname).<cluster-domain>
+      Otherwise, charm will use reverse DNS to try resolve a valid hostname for the binding address
+      of the relation.
+  broker-cluster-domain:
+    type: string
+    default: ''
+    description: |
+      If set, hostname to be used on the controller listener of the cluster relation will be:
       $(hosname).<cluster-domain>
       Otherwise, charm will use reverse DNS to try resolve a valid hostname for the binding address
       of the relation.

@@ -3,8 +3,9 @@ import socket
 from ops.framework import Object, StoredState
 from charmhelpers.contrib.network.ip import get_hostname
 
-from wand.security.ssl import CreateTruststore
-
+from wand.security.ssl import (
+    CreateTruststore
+)
 
 class KafkaBrokerCluster(Object):
 
@@ -39,36 +40,64 @@ class KafkaBrokerCluster(Object):
         self.state.set_default(truststore_mode="")
 
     @property
+    def is_ready(self):
+        return True
+
+    @property
     def user(self):
         return self.state.truststore_user
+
+    @user.setter
+    def user(self, u):
+        self.state.truststore_user = u
 
     @property
     def group(self):
         return self.state.truststore_group
 
+    @group.setter
+    def group(self, g):
+        self.state.truststore_group = g
+
     @property
     def mode(self):
         return self.state.truststore_mode
+
+    @mode.setter
+    def mode(self, m):
+        self.state.truststore_mode = m
 
     @property
     def relation(self):
         return self._relation
 
+    @property
+    def unit(self):
+        return self._unit
+
+    @property
+    def charm(self):
+        return self._charm
+
     def set_ssl_keypair(self,
                         ssl_cert,
                         ks_path,
                         ks_pwd,
+                        ts_path,
+                        ts_pwd,
                         user, group, mode):
-        self.relation.data[self._unit]["tls_cert"] = ssl_cert
+        self.relation.data[self.unit]["tls_cert"] = ssl_cert
         self.state.keystore_path = ks_path
         self.state.keystore_pwd = ks_pwd
         self.state.truststore_user = user
         self.state.truststore_group = group
         self.state.truststore_mode = mode
+        self.state.truststore_path = ts_path
+        self.state.truststore_pwd = ts_pwd
         self._get_all_tls_certs()
 
     def is_ssl_enabled(self):
-        if len(self.relation.data[self._unit].get("tls_cert", "")) > 0:
+        if len(self.relation.data[self.unit].get("tls_cert", "")) > 0:
             return True
         return False
 
@@ -92,13 +121,11 @@ class KafkaBrokerCluster(Object):
         if not self.is_ssl_enabled():
             return
         self.state.trusted_certs = \
-            self.relation.data[self._unit]["tls_cert"] + \
-            " " + " ".join(
-                [self.relation.data[u].get("tls_cert", "")
-                 for u in self.relation.units])
+            "::".join(list(self.relation.data[u].get("tls_cert", "")
+                           for u in self.relation.units))
         CreateTruststore(self.state.truststore_path,
                          self.state.truststore_pwd,
-                         self.state.trusted_certs.split(),
+                         self.state.trusted_certs.split("::"),
                          ts_regenerate=True,
                          user=self.state.truststore_user,
                          group=self.state.truststore_group,
@@ -124,8 +151,7 @@ class KafkaBrokerCluster(Object):
             "listeners": self.state.listeners,
             "listener.security.protocol.map": self.state.listener_protocol_map,
             "advertised.listeners": self.state.advertised_listeners,
-            "inter.broker.listener.name": "INTERNAL",
-            "control.plane.listener.name": "CONTROLLER"
+            "inter.broker.listener.name": "internal",
         }
         if self.is_ssl_enabled():
             ssl_opts = {}
@@ -145,6 +171,7 @@ class KafkaBrokerCluster(Object):
                 _opts[name + ".ssl.client.auth"] = "required"
                 ssl_opts = {**_opts, **ssl_opts}
             listener_opts = {**ssl_opts, **listener_opts}
+        return listener_opts
 
     @property
     def is_single(self):
@@ -157,47 +184,50 @@ class KafkaBrokerCluster(Object):
     def on_cluster_relation_joined(self, event):
         self.on_cluster_relation_changed(event)
 
+    def _get_hostname(self, listener):
+        clusterdomain = "{}-cluster-domain".format(listener.lower())
+        if clusterdomain in self.charm.config:
+            return "{}.{}".format(
+            socket.gethostname(),
+            self.charm.config[clusterdomain])
+        return get_hostname(self.binding_addr())
+
     def on_cluster_relation_changed(self, event):
         self._get_all_tls_certs()
 
         if os.environ.get("JUJU_AVAILABILITY_ZONE"):
-            self._relation.data[self.charm.unit]["az"] = \
+            self.relation.data[self.unit]["az"] = \
                 os.environ.get("JUJU_AVAILABILITY_ZONE")
         az_set = set()
         for u in self.relation.units:
             az_set.add(self.relation.data[u]["az"])
         self.state.peer_num_azs = len(az_set)
-        # Resolve hostname
-        hostname = "{}.{}".format(
-            socket.gethostname(),
-            self.config["cluster-domain"]) \
-            if self.config["cluster-domain"] \
-            else get_hostname(self.binding_addr())
         # Creates a list similar to: [{'test': [{'a': 'b', 'c': 'd'}]}]
         listeners = self._charm.config.get("listeners", "") or {}
         # If this is set via option, we override
         # those values to predefined on charms
-        listeners["INTERNAL"] = "{}:{}".format(hostname, 9092)
-        listeners["CONTROLLER"] = "{}:{}".format(hostname, 9093)
-        listeners["EXTERNAL"] = "{}:{}".format(hostname, 9094)
-        self.state.listeners = ",".join([k+"://"+v for k, v in listeners])
+        listeners["internal"] = "{}:{}".format(self._get_hostname("internal"), 9092)
+        listeners["broker"] = "{}:{}".format(self._get_hostname("broker"), 9093)
+        listeners["client"] = "{}:{}".format(self._get_hostname("client"), 9094)
+        self.state.listeners = ",".join([k+"://"+v for k, v in list(listeners.items())])
         # TODO: avoid PLAINTEXT, check:
         # https://docs.confluent.io/platform/current/installation/ \
         #     configuration/broker-configs.html#  \
         #     brokerconfigs_listener.security.protocol.map
+        # TODO: add SASL if available
         if not self.is_ssl_enabled():
             self.state.listener_protocol_map = \
-                ",".join([k+":PLAINTEXT" for k, v in listeners])
+                ",".join([k+":PLAINTEXT" for k, v in list(listeners.items())])
         else:
             self.state.listener_protocol_map = \
-                ",".join([k+":SSL" for k, v in listeners])
+                ",".join([k+":SSL" for k, v in list(listeners.items())])
         # if advertised listeners is set, pass it here
         if self._charm.config.get("advertised.listeners", None):
             self.state.advertised_listeners = \
                 self.state.advertised_listeners + \
                 self._charm.config["advertised.listeners"]
         else:
-            self.state.advertised_listeners = self.state.listeners["EXTERNAL"]
+            self.state.advertised_listeners = self.state.listeners
 
     @property
     def peer_addresses(self):
@@ -209,9 +239,9 @@ class KafkaBrokerCluster(Object):
     @property
     def advertise_addr(self):
         m = self.model
-        return m.get_binding(self.relation_name).network.ingress_address
+        return m.get_binding(self._relation_name).network.ingress_address
 
     @property
     def binding_addr(self):
         m = self.model
-        return m.get_binding(self.relation_name).network.binding_address
+        return m.get_binding(self._relation_name).network.binding_address

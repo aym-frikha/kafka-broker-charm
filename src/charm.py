@@ -24,10 +24,22 @@ from charmhelpers.core.hookenv import (
     is_leader
 )
 
+from charmhelpers.core.host import (
+    service_running,
+    service_restart,
+    service_reload
+)
+
 from wand.apps.kafka import KafkaJavaCharmBase
 from .cluster import KafkaBrokerCluster
 from wand.apps.relations.zookeeper import ZookeeperRequiresRelation
-from wand.security.ssl import genRandomPassword
+from wand.security.ssl import (
+    genRandomPassword,
+    generateSelfSigned,
+    PKCS12CreateKeystore
+)
+from wand.contrib.linux import getCurrentUserAndGroup
+
 
 logger = logging.getLogger(__name__)
 
@@ -88,39 +100,56 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         self.zk.group = self.config.get("group", "")
         self.zk.mode = 0o640
         self.zk.on_zookeeper_relation_joined(event)
+        self._on_config_changed(event)
 
     def _on_zookeeper_relation_changed(self, event):
         self.zk.user = self.config.get("user", "")
         self.zk.group = self.config.get("group", "")
         self.zk.mode = 0o640
         self.zk.on_zookeeper_relation_changed(event)
+        self._on_config_changed(event)
 
     def _generate_keystores(self):
+        # If we will auto-generate the root ca
+        # and at least one of the certs or keys is not yet set,
+        # then we can proceed and regenerate it.
+        if self.config["generate-root-ca"] and \
+            (len(self.ks.ssl_cert) > 0 and \
+             len(self.ks.ssl_key) > 0 and \
+             len(self.ks.zk_cert) > 0 and \
+             len(self.ks.zk_key) > 0):
+            return
         if self.config["generate-root-ca"]:
-            generateSelfSigned(self.unit_folder,
-                               certname="zk-kafka-broker-root-ca",
-                               user=self.config["user"],
-                               group=self.config["group"],
-                               mode=0o640)
-            generateSelfSigned(self.unit_folder,
-                               certname="ssl-kafka-broker-root-ca",
-                               user=self.config["user"],
-                               group=self.config["group"],
-                               mode=0o640)
+            self.ks.ssl_cert, self.ks.ssl_key = \
+                generateSelfSigned(self.unit_folder,
+                                   certname="zk-kafka-broker-root-ca",
+                                   user=self.config["user"],
+                                   group=self.config["group"],
+                                   mode=0o640)
+            self.ks.zk_cert, self.ks.zk_key = \
+                generateSelfSigned(self.unit_folder,
+                                   certname="ssl-kafka-broker-root-ca",
+                                   user=self.config["user"],
+                                   group=self.config["group"],
+                                   mode=0o640)
         else:
+            # Check if the certificates remain the same
+            if self.ks.zk_cert == self.get_zk_cert() and \
+                self.ks.zk_key == self.get_zk_key() and \
+                self.ks.ssl_cert == self.get_ssl_cert() and \
+                self.ks.ssl_key == self.get_ssl_key():
+                # Yes, they do, leave this method as there is nothing to do.
+                return
             # Certs already set either as configs or certificates relation
             self.ks.zk_cert = self.get_zk_cert()
             self.ks.zk_key = self.get_zk_key()
             self.ks.ssl_cert = self.get_ssl_cert()
             self.ks.ssl_key = self.get_ssl_key()
-        self.ks.ks_zookeeper_pwd = genRandomPassword()
-        self.ks.ts_zookeeper_pwd = genRandomPassword()
-        if len(self.ks.zk_cert) > 0 and \
-           len(self.ks.zk_key) > 0:
+        if (len(self.ks.zk_cert) > 0 and len(self.ks.zk_key) > 0):
+            self.ks.ks_zookeeper_pwd = genRandomPassword()
             filename = genRandomPassword(6)
             PKCS12CreateKeystore(
-                self.config.get("keystore-zookeeper-path",
-                                "/var/ssl/private/kafka_zookeeper_ks.jks"),
+                self.get_zk_keystore(),
                 self.ks.ks_zookeeper_pwd,
                 self.get_zk_cert(),
                 self.get_zk_key(),
@@ -132,10 +161,10 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
                 openssl_p12_path="/tmp/" + filename + ".p12")
         if len(self.ks.ssl_cert) > 0 and \
            len(self.ks.ssl_key) > 0:
+            self.ks.ts_zookeeper_pwd = genRandomPassword()
             filename = genRandomPassword(6)
             PKCS12CreateKeystore(
-                self.config.get("keystore-path",
-                                "/var/ssl/private/kafka_ssl_ks.jks"),
+                self.get_ssl_keystore(),
                 self.ks.ks_password,
                 self.get_ssl_cert(),
                 self.get_ssl_key(),
@@ -146,7 +175,7 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
                 openssl_key_path="/tmp/" + filename + ".key",
                 openssl_p12_path="/tmp/" + filename + ".p12")
 
-    def _on_install(self, _):
+    def _on_install(self, event):
         # TODO: Create /var/lib/kafka folder and all log dirs, set permissions
         packages = []
         if self.config.get("install_method") == "archive":
@@ -169,6 +198,7 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
                                       self.config.get("group",
                                                       "confluent"),
                                       self.config.get("fs-options", None))
+        self._on_config_changed(event)
 
     def _check_if_ready(self):
         if not self.cluster.is_ready:
@@ -183,19 +213,41 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         return self.framework.model.get_relation(rel_name).units
 
     def get_ssl_cert(self):
-        if len(self.ks.ssl_cert) > 0:
+        if self.config["generate-root-ca"]:
             return self.ks.ssl_cert
         return base64.b64decode(self.config["ssl_cert"]).decode("ascii")
 
     def get_ssl_key(self):
-        if len(self.ks.ssl_key) > 0:
+        if self.config["generate-root-ca"]:
             return self.ks.ssl_key
         return base64.b64decode(self.config["ssl_key"]).decode("ascii")
+
+    def get_ssl_keystore(self):
+        path = self.config.get("keystore-path",
+                               "/var/ssl/private/kafka_ssl_ks.jks")
+        pwd = self.ks.ks_password
+        return path
+
+    def get_ssl_truststore(self):
+        path = self.config.get("truststore-path",
+                               "/var/ssl/private/kafka_ssl_ks.jks")
+        pwd = self.ks.ts_password
+        return path
+
+    def get_zk_keystore(self):
+        path = self.config.get("keystore-zookeeper-path",
+                               "/var/ssl/private/kafka_zk_ks.jks")
+        return path
+
+    def get_zk_truststore(self):
+        path = self.config.get("truststore-zookeeper-path",
+                               "/var/ssl/private,kafka_zk_ts.jks")
+        return path
 
     def get_zk_cert(self):
         # TODO(pguimaraes): expand it to count
         # with certificates relation or action cert/key
-        if len(self.ks.zk_cert) > 0:
+        if self.config["generate-root-ca"]:
             return self.ks.zk_cert
         return base64.b64decode(
                    self.config["ssl-zk-cert"]).decode("ascii")
@@ -203,7 +255,7 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
     def get_zk_key(self):
         # TODO(pguimaraes): expand it to count
         # with certificates relation or action cert/key
-        if len(self.ks.zk_key) > 0:
+        if self.config["generate-root-ca"]:
             return self.ks.zk_key
         return base64.b64decode(
                    self.config["ssl-zk-key"]).decode("ascii")
@@ -243,16 +295,28 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         # https://github.com/confluentinc/cp-ansible/blob/ \
         #     b711fc9e3b43d2069a9ac8b13177e7f2a07c7bfb/VARIABLES.md
         server_props["kafka_broker_rest_proxy_enabled"] = False
+        # Cluster certificate:
+        if self.config.get("generate-root-ca", False) or \
+            (self.ks.ssl_cert and self.ks.ssl_key):
+            user = self.config.get("user", "")
+            group = self.config.get("group", "")
+            ks = self.get_ssl_keystore()
+            ts = self.get_ssl_truststore()
+            self.cluster.set_ssl_keypair(self.ks.ssl_cert,
+                                         self.get_ssl_keystore(),
+                                         self.ks.ks_password,
+                                         self.get_ssl_truststore(),
+                                         self.ks.ts_password,
+                                         user, group, 0o640)
         # Zookeeper options:
-        if self.get_zk_cert() and self.get_zk_key():
+        if self.ks.zk_cert and self.ks.zk_key:
             user, group = getCurrentUserAndGroup()
-            self.zk.user = self.config("user", user)
-            self.zk.group = self.config("group", group)
+            self.zk.user = self.config.get("user", user)
+            self.zk.group = self.config.get("group", group)
             self.zk.mode = 0o640
             self.zk.set_mTLS_auth(
                 self.get_zk_cert(),
-                self.config.get("truststore-zookeeper-path",
-                                "/var/ssl/private/kafka-broker-ts-zookeeper.jks"),
+                self.get_zk_truststore(),
                 self.ks.ts_zookeeper_pwd)
         if self.is_sasl_enabled():
             if self.distro == "confluent":
@@ -270,21 +334,15 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
             client_props["zookeeper.clientCnxnSocket"] = "org.apache.zookeeper.ClientCnxnSocketNetty"
             client_props["zookeeper.ssl.client.enable"] = "true"
             client_props["zookeeper.ssl.keystore.location"] = \
-                self.config.get("keystore-zookeeper-path",
-                                "/var/ssl/private/kafka_zookeeper_ks.jks")
-            self.ks.ks_zookeeper_pwd = genRandomPassword()
+                self.get_zk_keystore()
             client_props["zookeeper.ssl.keystore.password"] = self.ks.ks_zookeeper_pwd
             client_props["zookeeper.ssl.truststore.location"] = \
-                self.config.get("truststore-zookeeper-path",
-                                "/var/ssl/private/kafka_zookeeper_ts.jks")
-            self.ks.ts_zookeeper_pwd = genRandomPassword()
+                self.get_zk_truststore()
             client_props["zookeeper.ssl.truststore.password"] = self.ks.ts_zookeeper_pwd
             # Set the SSL mTLS config on the relation
             self.zk.set_mTLS_auth(self.get_zk_cert(),
                                   client_props["zookeeper.ssl.truststore.location"],
                                   self.ks.ts_password)
-            # Attaching client_props to server_props config
-            server_props = {**server_props, **client_props}
             render(source="zookeeper-tls-client.properties.j2",
                    target="/etc/kafka/zookeeper-tls-client.properties",
                    user=self.config.get('user'),
@@ -293,6 +351,10 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
                    context={
                        "client_props": client_props
                    })
+            # Now, rendering the server_props part:
+            del client_props["zookeeper.ssl.keystore.location"]
+            del client_props["zookeeper.ssl.keystore.password"]
+            server_props = {**server_props, **client_props}
         # Back to server.properties, render it
         render(source="server.properties.j2",
                target="/etc/kafka/server.properties",

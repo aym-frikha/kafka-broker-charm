@@ -17,7 +17,7 @@ from unit_tests.config_files import SERVER_PROPS
 from wand.contrib.linux import getCurrentUserAndGroup
 import wand.apps.relations.zookeeper as zkRelation
 import wand.apps.kafka as kafka
-
+import wand.contrib.java as java
 import wand.security as security
 
 TO_PATCH_FETCH = [
@@ -34,7 +34,7 @@ TO_PATCH_HOST = [
 
 
 class MockRelation(object):
-    def __init__(self, data):
+    def __init__(self, data=None):
         self._data = data
 
     @property
@@ -67,37 +67,61 @@ class TestCharm(unittest.TestCase):
         for p in TO_PATCH_FETCH:
             self._patch(ubuntu, p)
         for p in TO_PATCH_HOST:
-            self._patch(host, p)
+            self._patch(charm, p)
 
-    @patch.object(cluster.KafkaBrokerCluster, "listener_opts",
+    # For _on_install
+    @patch.object(charm.KafkaBrokerCharm, "create_log_dir")
+    @patch.object(kafka.KafkaJavaCharmBase, "install_packages")
+    # For _on_config_changed
+    @patch.object(charm.KafkaBrokerCharm, "render_service_override_file")
+    @patch.object(cluster.KafkaBrokerCluster, "unit",
                   new_callable=PropertyMock)
+    @patch.object(cluster.KafkaBrokerCluster, "relation",
+                  new_callable=PropertyMock)
+    @patch.object(zkRelation.ZookeeperRequiresRelation, "unit",
+                  new_callable=PropertyMock)
+    @patch.object(zkRelation.ZookeeperRequiresRelation, "relation",
+                  new_callable=PropertyMock)
+#    @patch.object(cluster.KafkaBrokerCluster, "listener_opts",
+#                  new_callable=PropertyMock)
     @patch.object(cluster.KafkaBrokerCluster, "num_azs",
                   new_callable=PropertyMock)
     @patch.object(cluster.KafkaBrokerCluster, "num_peers",
                   new_callable=PropertyMock)
-    @patch.object(zkRelation.ZookeeperRequiresRelation, "get_zookeeper_list")
-    @patch.object(kafka.KafkaJavaCharmBase, "create_log_dir")
     @patch.object(charm.KafkaBrokerCharm,
                   'is_client_ssl_enabled')
     @patch.object(charm, "render")
-    def test_confluent_simple_render_server_props(self, mock_render,
-                                                  mock_is_client_ssl,
-                                                  mock_create_log_dir,
-                                                  mock_get_zk_list,
-                                                  mock_num_peers,
-                                                  mock_num_azs,
-                                                  mock_listeners):
-        mock_listeners.return_value = {}
+    def test_confluent_config_changed_call(self, mock_render,
+                                           mock_is_client_ssl,
+                                           mock_num_peers,
+                                           mock_num_azs,
+#                                           mock_listeners,
+                                           mock_zk_rel_data,
+                                           mock_zk_unit,
+                                           mock_cluster_data,
+                                           mock_cluster_unit,
+                                           mock_render_svc,
+                                           mock_inst_packages,
+                                           mock_create_log_dir):
+        def __cleanup():
+            for i in ["/tmp/vmdisovs1_testcert.crt",
+                      "/tmp/vmdisovs1_testcert.key",
+                      "/tmp/15fsnuw_ks.jks",
+                      "/tmp/15fsnuw_ts.jks",
+                      "/tmp/15fsnuw_zk_ks.jks",
+                      "/tmp/15fsnuw_zk_ts.jks"]:
+                try:
+                    os.remove(i)
+                except:  # noqa
+                    pass
+
+        __cleanup()
+#        mock_listeners.return_value = {}
         mock_num_peers.return_value = 3
         mock_num_azs.return_value = 3
         mock_render.return_value = ""
         mock_is_client_ssl.return_value = False
         crt, key = security.generateSelfSigned("/tmp", "vmdisovs1_testcert")
-        mock_get_zk_list.return_value = [
-            {"myid": 1, "endpoint": "ansiblezookeeper2.example.com:2888:3888"},
-            {"myid": 2, "endpoint": "ansiblezookeeper3.example.com:2888:3888"},
-            {"myid": 3, "endpoint": "ansiblezookeeper1.example.com:2888:3888"},
-        ]
         user, group = getCurrentUserAndGroup()
         harness = Harness(charm.KafkaBrokerCharm)
         self.addCleanup(harness.cleanup)
@@ -111,16 +135,52 @@ class TestCharm(unittest.TestCase):
             "customize-failure-domain": True,
             "replication-factor": 3,
             "generate-root-ca": True,
+            "internal-cluster-domain": "maas",
+            "client-cluster-domain": "maas",
+            "broker-cluster-domain": "maas",
+            "keystore-path": "/tmp/15fsnuw_ks.jks",
+            "truststore-path": "/tmp/15fsnuw_ts.jks",
+            "keystore-zookeeper-path": "/tmp/15fsnuw_zk_ks.jks",
+            "truststore-zookeeper-path": "/tmp/15fsnuw_zk_ts.jks",
+            "data-log-dir": {"ext4": "/var/lib/kafka"}
         })
-        rel_id = harness.add_relation("zookeeper", "zookeeper") 
-        harness.add_relation_unit(rel_id, 'zookeeper/0')        
-        rel_id = harness.add_relation("cluster", "kafka-broker")
-        harness.add_relation_unit(rel_id, 'kafka-broker/0')     
-        zk = harness.charm
-        zk._generate_server_properties()
-        mock_render.asser_called()
-        print(mock_render.call_args_list)
+        mock_zk_rel_data.return_value = MockRelation(data = {
+            "this": {},
+            "zookeeper": {"mtls_cert": crt, "endpoint": "zookeeper.maas:2182"}
+        })
+        mock_zk_unit.return_value = "this"
+        mock_cluster_data.return_value = MockRelation(data = {
+            "this": {},
+            "otherunit1": {"az": "2", "tls_cert": crt}
+        })
+        mock_cluster_unit.return_value = "this"
+        kafka = harness.charm
+        kafka._on_install(None)
+        kafka.cluster.on_cluster_relation_joined(None)
+        kafka._on_zookeeper_relation_changed(None)
+        kafka._on_config_changed(None)
+        __cleanup()
+        mock_render.assert_called()
+        # There are 5x calls to render: (1) tls-client-properties,
+        # (2) server.props (for _on_install)
+        # (3) client.props and then (4) tls-client.props (config-changed)
+        # (5) server.props (on_config_changed)
+        # (6) client.props rendering
+        # Interested on the output of the 5th call
+        server_props = mock_render.call_args_list[4].kwargs["context"]
+        print(server_props)
+        # clean up values that are randomly generated or depend on the machine:
+        server_props["server_props"]["listeners"] = "internal://vm.maas:9092,broker://vm.maas:9093,client://vm.maas:9094"
+        server_props["server_props"]["advertised.listeners"] = "internal://vm.maas:9092,broker://vm.maas:9093,client://vm.maas:9094"
+        server_props["server_props"]["listener.name.client.ssl.truststore.password"] = "confluenttruststorepass"
+        server_props["server_props"]["listener.name.client.ssl.keystore.password"] = "confluentkeystorepass"
+        server_props["server_props"]["listener.name.internal.ssl.truststore.password"] = "confluenttruststorepass"
+        server_props["server_props"]["listener.name.internal.ssl.keystore.password"] = "confluentkeystorepass"
+        server_props["server_props"]["listener.name.broker.ssl.truststore.password"] = "confluenttruststorepass"
+        server_props["server_props"]["listener.name.broker.ssl.keystore.password"] = "confluentkeystorepass"
+        server_props["server_props"]["zookeeper.ssl.truststore.password"] = "confluenttruststorepass"
         simulate_render = self._simulate_render(
-            ctx=mock_render.call_args.kwargs["context"],
+            ctx=server_props,
             templ_file='server.properties.j2')
+        print(simulate_render)
         self.assertEqual(SERVER_PROPS, simulate_render)
