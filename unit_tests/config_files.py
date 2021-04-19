@@ -15,7 +15,7 @@ confluent.license.topic=_confluent-license
 confluent.support.metrics.enable=True
 confluent.support.customer.id=anonymous
 super.users=User:mds;User:HTTP
-log.dirs=/tmp/
+log.dirs=/var/lib/kafka_data
 broker.rack=test
 offsets.topic.replication.factor=3
 transaction.state.log.min.isr=2
@@ -23,6 +23,7 @@ transaction.state.log.replication.factor=3
 confluent.license.topic.replication.factor=3
 confluent.metadata.topic.replication.factor=3
 confluent.balancer.topic.replication.factor=3
+kafka_broker_rest_proxy_enabled=False
 listener.name.client.ssl.truststore.location=/tmp/15fsnuw_ts.jks
 listener.name.client.ssl.truststore.password=confluenttruststorepass
 listener.name.client.ssl.truststore.typee=JKS
@@ -48,14 +49,13 @@ listeners=internal://vm.maas:9092,broker://vm.maas:9093,client://vm.maas:9094
 listener.security.protocol.map=internal:SSL,broker:SSL,client:SSL
 advertised.listeners=internal://vm.maas:9092,broker://vm.maas:9093,client://vm.maas:9094
 inter.broker.listener.name=internal
-kafka_broker_rest_proxy_enabled=False
 zookeeper.connect=zookeeper.maas:2182
 zookeeper.set.acl=False
 zookeeper.clientCnxnSocket=org.apache.zookeeper.ClientCnxnSocketNetty
 zookeeper.ssl.client.enable=true
 zookeeper.ssl.truststore.location=/tmp/15fsnuw_zk_ts.jks
 zookeeper.ssl.truststore.password=confluenttruststorepass
-"""
+""" # noqa
 
 
 SERVER_PROPS_COMPLETE = """advertised.listeners=INTERNAL://ansiblebroker3.example.com:9092,BROKER://ansiblebroker3.example.com:9091,CLIENT://ansiblebroker3.example.com:9093
@@ -177,4 +177,4 @@ zookeeper.connection.timeout.ms=18000
 zookeeper.set.acl=true
 zookeeper.ssl.client.enable=true
 zookeeper.ssl.truststore.location=/var/ssl/private/kafka_broker.truststore.jks
-zookeeper.ssl.truststore.password=confluenttruststorepass"""
+zookeeper.ssl.truststore.password=confluenttruststorepass""" # noqa

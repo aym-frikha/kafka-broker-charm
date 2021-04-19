@@ -13,6 +13,11 @@ options:
     type: string
     description: |
       Sets the kafka version for the given distro.
+  cluster-count:
+    default: 3
+    type: int
+    description: |
+      The minimum amount of units to bootstrap the cluster
   install-method:
     default: 'package'
     type: string
@@ -40,10 +45,11 @@ options:
     description: |
       Path to the truststore for zookeeper
   regenerate-keystore-truststore:
-    default: False
+    default: True
     type: boolean
     description: |
       If set to True, force charm to regenerate trust and keystore
+      Setting to False is still EXPERIMENTAL
   ssl_mutual_auth_enabled:
     default: False
     type: boolean
@@ -218,20 +224,22 @@ options:
     description: |
       Filesystem options for data-*-dir options.
       This value cannot be changed post deployment of a unit.
-  log.dirs:
+  data-log-dir:
     type: string
-    default: "/var/lib/kafka-data"
+    default: |
+      ext4: /var/lib/kafka_data
     description: |
       The list must be in the forme of:
       log.dirs: |
         <fs-type>: <folder-path>
       Only the first folder will be taken into consideration. The <fs-type> is used by the charm
       if log-device is also set.
+      The folders in this option will form the log.dirs
   server-properties:
     type: string
     description: |
       YAML formatted list of server properties to be passed to the charm
-    default:
+    default: |
       group.initial.rebalance.delay.ms: 3000
       log.retention.check.interval.ms: 300000
       log.retention.hours: 168
