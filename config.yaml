@@ -8,6 +8,11 @@ options:
       Only two values possible: apache or confluent. Defines if will use apache kafka
       or confluent distro to install kafka packages. Both distro and version
       should be set.
+  confluent_license_topic:                    
+    default: "_confluent-license"             
+    type: string                              
+    description: |                            
+      Topic used for storing Confluent license
   version:
     default: '6.1'
     type: string
@@ -209,7 +214,7 @@ options:
     type: string
     description: |
       YAML formatted list of options for client.properties file
-    default:
+    default: |
       default.api.timeout.ms: 20000
       request.timeout.ms: 20000
   data-log-device:
@@ -252,7 +257,6 @@ options:
       socket.request.max.bytes: 104857600
       socket.send.buffer.bytes: 102400
       zookeeper.connection.timeout.ms: 18000
-      confluent.license.topic: _confluent-license
       confluent.support.metrics.enable: true
       confluent.support.customer.id: anonymous
       super.users: User:mds;User:HTTP

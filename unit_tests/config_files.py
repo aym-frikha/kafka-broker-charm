@@ -53,6 +53,8 @@ zookeeper.connect=zookeeper.maas:2182
 zookeeper.set.acl=False
 zookeeper.clientCnxnSocket=org.apache.zookeeper.ClientCnxnSocketNetty
 zookeeper.ssl.client.enable=true
+zookeeper.ssl.keystore.location=/tmp/15fsnuw_zk_ks.jks
+zookeeper.ssl.keystore.password=confluentkeystorepass
 zookeeper.ssl.truststore.location=/tmp/15fsnuw_zk_ts.jks
 zookeeper.ssl.truststore.password=confluenttruststorepass
 """ # noqa

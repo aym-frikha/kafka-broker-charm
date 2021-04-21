@@ -1,0 +1,59 @@
+series: bionic
+variables:
+  version:  &version  "6.1"
+  distro:   &distro   "confluent"
+machines:
+  "0":
+    constraints: cores=2 mem=4G root-disk=20G
+  "1":
+    constraints: cores=2 mem=4G root-disk=20G
+  "2":
+    constraints: cores=2 mem=4G root-disk=20G
+  "3":
+    constraints: cores=2 mem=4G root-disk=20G
+  "4":
+    constraints: cores=2 mem=4G root-disk=20G
+  "5":
+    constraints: cores=2 mem=4G root-disk=20G
+applications:
+  kafka-broker:
+    charm: ../kafka-broker.charm
+    num_units: 3
+    options:
+      user: test
+      group: test
+      replication-factor: 3
+      customize-failure-domain: False
+      generate-root-ca: True
+      internal-cluster-domain: maas
+      client-cluster-domain: maas
+      broker-cluster-domain: maas
+      keystore-path: /tmp/15fsnuw_ks.jks
+      truststore-path: /tmp/15fsnuw_ts.jks
+      keystore-zookeeper-path: /tmp/15fsnuw_zk_ks.jks
+      truststore-zookeeper-path: /tmp/15fsnuw_zk_ts.jks
+    to:
+    - 3
+    - 4
+    - 5  
+  zookeeper:
+    charm: ../../zookeeper-charm/zookeeper.charm
+    num_units: 3
+    options:
+      version: *version
+      distro: *distro
+      user: test
+      group: test
+      quorum-keystore-path: /var/ssl/private/quorum-ks.jks
+      quorum-truststore-path: /var/ssl/private/quorum-ts.jks
+      keystore-path: /var/ssl/private/ssl-ks.jks
+      truststore-path: /var/ssl/private/ssl-ts.jks
+      generate-root-ca: true
+      ssl_quorum: true
+    to:
+    - 0
+    - 1
+    - 2
+relations:
+- - kafka-broker
+  - zookeeper

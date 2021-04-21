@@ -213,6 +213,7 @@ class TestCharm(unittest.TestCase):
         server_props["server_props"]["listener.name.internal.ssl.keystore.password"] = "confluentkeystorepass" # noqa
         server_props["server_props"]["listener.name.broker.ssl.truststore.password"] = "confluenttruststorepass" # noqa
         server_props["server_props"]["listener.name.broker.ssl.keystore.password"] = "confluentkeystorepass" # noqa
+        server_props["server_props"]["zookeeper.ssl.keystore.password"] = "confluentkeystorepass" # noqa
         server_props["server_props"]["zookeeper.ssl.truststore.password"] = "confluenttruststorepass" # noqa
         simulate_render = self._simulate_render(
             ctx=server_props,

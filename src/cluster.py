@@ -14,6 +14,7 @@ class KafkaBrokerCluster(KafkaRelationBase):
         self.state.set_default(listener_protocol_map="")
         self.state.set_default(advertised_listeners="")
         self._min_units = min_units
+        self._enable_az = False
 
     @property
     def min_units(self):
@@ -22,6 +23,14 @@ class KafkaBrokerCluster(KafkaRelationBase):
     @min_units.setter
     def min_units(self, u):
         self._min_units = u
+
+    @property
+    def enable_az(self):
+        return self._enable_az
+
+    @enable_az.setter
+    def enable_az(self, x):
+        self._enable_az = x
 
     @property
     def is_ready(self):
@@ -54,7 +63,7 @@ class KafkaBrokerCluster(KafkaRelationBase):
 
     @property
     def num_peers(self):
-        return len(self._relations)
+        return len(self.all_units(self.relation))
 
     @property
     def num_azs(self):
@@ -92,7 +101,7 @@ class KafkaBrokerCluster(KafkaRelationBase):
 
     @property
     def is_single(self):
-        return len(self._relations) == 1
+        return len(self.relation) == 1
 
     @property
     def is_joined(self):
@@ -112,13 +121,13 @@ class KafkaBrokerCluster(KafkaRelationBase):
     def on_cluster_relation_changed(self, event):
         self._get_all_tls_certs()
 
-        if os.environ.get("JUJU_AVAILABILITY_ZONE"):
+        if self.enable_az:
             self.relation.data[self.unit]["az"] = \
                 os.environ.get("JUJU_AVAILABILITY_ZONE")
-        az_set = set()
-        for u in self.relation.units:
-            az_set.add(self.relation.data[u]["az"])
-        self.state.peer_num_azs = len(az_set)
+            az_set = set()
+            for u in self.relation.units:
+                az_set.add(self.relation.data[u]["az"])
+            self.state.peer_num_azs = len(az_set)
         # Creates a list similar to: [{'test': [{'a': 'b', 'c': 'd'}]}]
         listeners = self._charm.config.get("listeners", "") or {}
         # If this is set via option, we override

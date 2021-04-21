@@ -101,10 +101,10 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
             self.cluster.on_cluster_relation_joined(event)
         except KafkaRelationBaseNotUsedError as e:
             # Relation not been used any other application, move on
-            logger.info(e.message)
+            logger.info(str(e))
         except KafkaRelationBaseTLSNotSetError as e:
             event.defer()
-            self.model.unit.status = BlockedStatus(e.message)
+            self.model.unit.status = BlockedStatus(str(e))
         self._on_config_changed(event)
 
     def _on_cluster_relation_changed(self, event):
@@ -115,10 +115,10 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
             self.cluster.on_cluster_relation_changed(event)
         except KafkaRelationBaseNotUsedError as e:
             # Relation not been used any other application, move on
-            logger.info(e.message)
+            logger.info(str(e))
         except KafkaRelationBaseTLSNotSetError as e:
             event.defer()
-            self.model.unit.status = BlockedStatus(e.message)
+            self.model.unit.status = BlockedStatus(str(e))
         self._on_config_changed(event)
 
     def _on_zookeeper_relation_joined(self, event):
@@ -129,10 +129,10 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
             self.zk.on_zookeeper_relation_joined(event)
         except KafkaRelationBaseNotUsedError as e:
             # Relation not been used any other application, move on
-            logger.info(e.message)
+            logger.info(str(e))
         except KafkaRelationBaseTLSNotSetError as e:
             event.defer()
-            self.model.unit.status = BlockedStatus(e.message)
+            self.model.unit.status = BlockedStatus(str(e))
         self._on_config_changed(event)
 
     def _on_zookeeper_relation_changed(self, event):
@@ -143,10 +143,10 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
             self.zk.on_zookeeper_relation_changed(event)
         except KafkaRelationBaseNotUsedError as e:
             # Relation not been used any other application, move on
-            logger.info(e.message)
+            logger.info(str(e))
         except KafkaRelationBaseTLSNotSetError as e:
             event.defer()
-            self.model.unit.status = BlockedStatus(e.message)
+            self.model.unit.status = BlockedStatus(str(e))
         self._on_config_changed(event)
 
     def _generate_keystores(self):
@@ -312,6 +312,8 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
             MaintenanceStatus("Starting server.properties")
         server_props = \
             yaml.safe_load(self.config.get("server-properties", "")) or {}
+        if self.get_license_topic() and len(self.get_license_topic()) > 0:
+            server_props = self.get_license_topic()
         server_props["log.dirs"] = \
             list(yaml.safe_load(
                      self.config.get("data-log-dir", "")).items())[0][1]
@@ -403,9 +405,9 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
                     self.ks.ts_zookeeper_pwd)
             except KafkaRelationBaseNotUsedError as e:
                 # Relation not been used any other application, move on
-                logger.info(e.message)
+                logger.info(str(e))
             except KafkaRelationBaseTLSNotSetError as e:
-                self.model.unit.status = BlockedStatus(e.message)
+                self.model.unit.status = BlockedStatus(str(e))
 
         if self.is_sasl_enabled():
             logger.info("SASL enabled")
@@ -448,22 +450,19 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
                          "{}".format(",".join(client_props)))
             render(source="zookeeper-tls-client.properties.j2",
                    target="/etc/kafka/zookeeper-tls-client.properties",
-                   user=self.config.get('user'),
+                   owner=self.config.get('user'),
                    group=self.config.get("group"),
                    perms=0o640,
                    context={
                        "client_props": client_props
                    })
-            # Now, rendering the server_props part:
-            del client_props["zookeeper.ssl.keystore.location"]
-            del client_props["zookeeper.ssl.keystore.password"]
             server_props = {**server_props, **client_props}
         logger.debug("Finished server.properties, options: "
                      "{}".format(",".join(server_props)))
         # Back to server.properties, render it
         render(source="server.properties.j2",
                target="/etc/kafka/server.properties",
-               user=self.config.get('user'),
+               owner=self.config.get('user'),
                group=self.config.get("group"),
                perms=0o640,
                context={
@@ -484,7 +483,7 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         logger.info("Generating client.properties")
         self.model.unit.statu = \
             MaintenanceStatus("Generating client.properties")
-        client_props = self.config["client-properties"] or {}
+        client_props = yaml.safe_load(self.config["client-properties"]) or {}
         if self.is_sasl_enabled():
             client_props["sasl.jaas.config"] = \
                 self.config.get("sasl-jaas-config", "")
@@ -509,7 +508,7 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
                      "{}".format(",".join(client_props)))
         render(source="client.properties.j2",
                target="/etc/kafka/client.properties",
-               user=self.config.get('user'),
+               owner=self.config.get('user'),
                group=self.config.get("group"),
                perms=0o640,
                context={
@@ -534,6 +533,9 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         self._generate_keystores()
         self.model.unit.status = \
             MaintenanceStatus("Render server.properties")
+
+        self.cluster.enable_az = self.config.get(
+            "customize-failure-domain", False)
         self._generate_server_properties(event)
         self.model.unit.status = \
             MaintenanceStatus("Render client properties")

@@ -12,9 +12,3 @@
 #       description: "Fail with this message"
 #       type: string
 #       default: ""
-get-truststore-password:
-  params:
-
-
-get-keystore-password:
-  params:
