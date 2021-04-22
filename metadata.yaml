@@ -14,6 +14,8 @@ peers:
 requires:
   zookeeper:
     interface: zookeeper
+  certificates:
+    interface: tls-certificates
 resources:
   archive:
     type: file

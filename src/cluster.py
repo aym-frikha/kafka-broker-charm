@@ -88,12 +88,12 @@ class KafkaBrokerCluster(KafkaRelationBase):
                     self.state.ts_path
                 _opts[name + ".ssl.truststore.password"] = \
                     self.state.ts_pwd
-                _opts[name + ".ssl.truststore.typee"] = "JKS"
+                _opts[name + ".ssl.truststore.type"] = "JKS"
                 _opts[name + ".ssl.keystore.location"] = \
                     keystore_path
                 _opts[name + ".ssl.keystore.password"] = \
                     keystore_pwd
-                _opts[name + ".ssl.keystore.typee"] = keystore_type
+                _opts[name + ".ssl.keystore.type"] = keystore_type
                 _opts[name + ".ssl.client.auth"] = "required"
                 ssl_opts = {**_opts, **ssl_opts}
             listener_opts = {**ssl_opts, **listener_opts}
@@ -109,6 +109,10 @@ class KafkaBrokerCluster(KafkaRelationBase):
 
     def on_cluster_relation_joined(self, event):
         self.on_cluster_relation_changed(event)
+
+    @property
+    def hostname(self):
+        return get_hostname(self.binding_addr)
 
     def _get_hostname(self, listener):
         clusterdomain = "{}-cluster-domain".format(listener.lower())
@@ -133,11 +137,11 @@ class KafkaBrokerCluster(KafkaRelationBase):
         # If this is set via option, we override
         # those values to predefined on charms
         listeners["internal"] = \
-            "{}:{}".format(self._get_hostname("internal"), 9092)
+            "{}:{}".format(self.hostname, 9092)
         listeners["broker"] = \
-            "{}:{}".format(self._get_hostname("broker"), 9093)
+            "{}:{}".format(self.hostname, 9093)
         listeners["client"] = \
-            "{}:{}".format(self._get_hostname("client"), 9094)
+            "{}:{}".format(get_hostname(self.advertise_addr), 9094)
         self.state.listeners = \
             ",".join([k+"://"+v for k, v in list(listeners.items())])
         # TODO: avoid PLAINTEXT, check:

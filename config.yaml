@@ -9,9 +9,9 @@ options:
       or confluent distro to install kafka packages. Both distro and version
       should be set.
   confluent_license_topic:                    
-    default: "_confluent-license"             
-    type: string                              
-    description: |                            
+    default: "_confluent-license"
+    type: string
+    description: |
       Topic used for storing Confluent license
   version:
     default: '6.1'
