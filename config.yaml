@@ -55,7 +55,7 @@ options:
     description: |
       If set to True, force charm to regenerate trust and keystore
       Setting to False is still EXPERIMENTAL
-  ssl_mutual_auth_enabled:
+  clientAuth:
     default: False
     type: boolean
     description: |

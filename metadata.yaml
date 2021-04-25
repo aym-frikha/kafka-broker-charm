@@ -11,6 +11,11 @@ subordinate: false
 peers:
   cluster:
     interface: kafka-broker-peer
+provides:
+  listeners:
+    interface: listeners
+  mds:
+    interface: mds
 requires:
   zookeeper:
     interface: zookeeper

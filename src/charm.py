@@ -43,7 +43,16 @@ from wand.security.ssl import (
     generateSelfSigned,
     PKCS12CreateKeystore
 )
-
+from wand.apps.relations.kafka_relation_base import (
+    KafkaRelationBaseNotUsedError
+)
+from wand.apps.relations.kafka_listener import (
+    KafkaListenerProvidesRelation,
+    KafkaListenerRelationNotSetError
+)
+from wand.apps.relations.kafka_mds import (
+    KafkaMDSProvidesRelation
+)
 logger = logging.getLogger(__name__)
 
 # Given: https://docs.confluent.io/current/ \
@@ -87,6 +96,14 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
                                self.on_certificates_relation_changed)
         self.framework.observe(self.on.update_status,
                                self.on_update_status)
+        self.framework.observe(self.on.mds_relation_joined,
+                               self.on_mds_relation_joined)
+        self.framework.observe(self.on.mds_relation_changed,
+                               self.on_mds_relation_changed)
+        self.framework.observe(self.on.listeners_relation_joined,
+                               self.on_listeners_relation_joined)
+        self.framework.observe(self.on.listeners_relation_changed,
+                               self.on_listeners_relation_changed)
         self.cluster = KafkaBrokerCluster(self, 'cluster',
                                           self.config.get("cluster-count", 3))
         self.zk = ZookeeperRequiresRelation(self, 'zookeeper')
@@ -98,6 +115,8 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         self.ks.set_default(ssl_key="")
         self.ks.set_default(ts_zookeeper_pwd=genRandomPassword())
         self.ks.set_default(ks_zookeeper_pwd=genRandomPassword())
+        self.listener = KafkaListenerProvidesRelation(self, 'listeners')
+        self.mds = KafkaMDSProvidesRelation(self, 'mds')
 
     def on_certificates_relation_joined(self, event):
         self.certificates.on_tls_certificate_relation_joined(event)
@@ -106,6 +125,22 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
     def on_certificates_relation_changed(self, event):
         self.certificates.on_tls_certificate_relation_changed(event)
         self._on_config_changed(event)
+
+    def on_listeners_relation_joined(self, event):
+        self.listener.on_listener_relation_joined(event)
+        self._on_config_changed(event)
+
+    def on_listeners_relation_changed(self, event):
+        self.listener.on_listener_relation_changed(event)
+        self._on_config_changed(event)
+
+    def on_mds_relation_joined(self, event):
+        # TODO: Implement
+        return
+
+    def on_mds_relation_changed(self, event):
+        # TODO: Implement
+        return
 
     def on_update_status(self, event):
         if not service_running(self.service):
@@ -380,8 +415,6 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         return path
 
     def get_zk_cert(self):
-        # TODO(pguimaraes): expand it to count
-        # with certificates relation or action cert/key
         if self.config["generate-root-ca"]:
             return self.ks.zk_cert
         if len(self.config.get("ssl_cert")) > 0 and \
@@ -394,8 +427,6 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         return c
 
     def get_zk_key(self):
-        # TODO(pguimaraes): expand it to count
-        # with certificates relation or action cert/key
         if self.config["generate-root-ca"]:
             return self.ks.zk_key
         if len(self.config.get("ssl_cert")) > 0 and \
@@ -460,7 +491,9 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
                               " come up". format(
                                   self.config.get("cluster-count")))
             return
+        server_props["inter.broker.listener.name"] = "BROKER"
 
+        # Last configs: set replication factors
         server_props["transaction.state.log.min.isr"] = \
             min(2, replication_factor)
         server_props["transaction.state.log.replication.factor"] = \
@@ -478,18 +511,32 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         # https://github.com/confluentinc/cp-ansible/blob/ \
         #     b711fc9e3b43d2069a9ac8b13177e7f2a07c7bfb/VARIABLES.md
         server_props["kafka_broker_rest_proxy_enabled"] = False
-        # Cluster certificate:
-        if (len(self.get_ssl_cert()) > 0 and len(self.get_ssl_key()) > 0):
+        # Cluster certificate: this is set using BROKER listener
+        if (len(self.get_ssl_cert()) > 0 and len(self.get_ssl_key()) > 0) and self.get_ssl_truststore():
             logger.info("Setting SSL for client connections")
             user = self.config.get("user", "")
             group = self.config.get("group", "")
-            self.cluster.set_ssl_keypair(self.ks.ssl_cert,
-                                         self.get_ssl_truststore(),
-                                         self.ks.ts_password,
-                                         user, group, 0o640)
+            self.listener.set_TLS_auth(
+                self.ks.ssl_cert,
+                self.get_ssl_truststore(),
+                self.ks.ts_password,
+                user, group, 0o640)
+
+#            self.cluster.set_ssl_keypair(self.ks.ssl_cert,
+#                                         self.get_ssl_truststore(),
+#                                         self.ks.ts_password,
+#                                         user, group, 0o640)
+#
+#        # Listener logic
+#        listener_opts = self.cluster.listener_opts(
+#            self.get_ssl_keystore(), self.ks.ks_password,
+#            clientauth=self.config.get("clientAuth", False))
         # Listener logic
-        listener_opts = self.cluster.listener_opts(
-            self.get_ssl_keystore(), self.ks.ks_password)
+        listeners, listener_opts = self.listener.get_unit_listener(
+            self.get_ssl_keystore(),
+            self.ks.ks_password,
+            get_default=True,
+            clientauth=self.config.get("clientAuth", False))
         server_props = {**server_props, **listener_opts}
 
         # Zookeeper options:
@@ -639,7 +686,13 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
 
         self.cluster.enable_az = self.config.get(
             "customize-failure-domain", False)
-        self._generate_server_properties(event)
+        try:
+            self._generate_server_properties(event)
+        except KafkaRelationBaseNotUsedError:
+            self.model.unit.status = \
+                BlockedStatus("Relation not ready yet")
+            event.defer()
+            return
         self.model.unit.status = \
             MaintenanceStatus("Render client properties")
         self._generate_client_properties()

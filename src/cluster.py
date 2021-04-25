@@ -48,7 +48,8 @@ class KafkaBrokerCluster(KafkaRelationBase):
         self.state.user = user
         self.state.group = group
         self.state.mode = mode
-        self.set_TLS_auth(ssl_cert, ts_path, ts_pwd)
+        # Cluster will not manage the keys anymore
+        # self.set_TLS_auth(ssl_cert, ts_path, ts_pwd)
 
     @property
     def truststore_pwd(self):
@@ -72,7 +73,8 @@ class KafkaBrokerCluster(KafkaRelationBase):
         return self.state.peer_num_azs
 
     def listener_opts(self,
-                      keystore_path, keystore_pwd, keystore_type="JKS"):
+                      keystore_path, keystore_pwd, keystore_type="JKS", clientauth=False):
+        # DEPRECATED METHOD
         listener_opts = {
             "listeners": self.state.listeners,
             "listener.security.protocol.map": self.state.listener_protocol_map,
@@ -94,7 +96,7 @@ class KafkaBrokerCluster(KafkaRelationBase):
                 _opts[name + ".ssl.keystore.password"] = \
                     keystore_pwd
                 _opts[name + ".ssl.keystore.type"] = keystore_type
-                _opts[name + ".ssl.client.auth"] = "required"
+                _opts[name + ".ssl.client.auth"] = "required" if clientauth else "none"
                 ssl_opts = {**_opts, **ssl_opts}
             listener_opts = {**ssl_opts, **listener_opts}
         return listener_opts
