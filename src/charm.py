@@ -43,9 +43,6 @@ from wand.security.ssl import (
     generateSelfSigned,
     PKCS12CreateKeystore
 )
-from wand.apps.relations.kafka_relation_base import (
-    KafkaRelationBaseNotUsedError
-)
 from wand.apps.relations.kafka_listener import (
     KafkaListenerProvidesRelation,
     KafkaListenerRelationNotSetError
@@ -227,7 +224,7 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
                     socket.gethostname()
                 ]
                 # Common name is always CN as this is the element
-               # that organizes the cert order from tls-certificates
+                # that organizes the cert order from tls-certificates
                 self.certificates.request_server_cert(
                     cn=rel.binding_addr,
                     sans=sans)
@@ -516,27 +513,35 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
             logger.info("Setting SSL for client connections")
             user = self.config.get("user", "")
             group = self.config.get("group", "")
+            # Manage the cluster certs first:
+            self.cluster.set_ssl_cert(self.get_ssl_cert())
+            extra_certs = self.cluster.get_all_certs()
             self.listener.set_TLS_auth(
-                self.ks.ssl_cert,
+                self.get_ssl_cert(),
                 self.get_ssl_truststore(),
                 self.ks.ts_password,
-                user, group, 0o640)
-
-#            self.cluster.set_ssl_keypair(self.ks.ssl_cert,
-#                                         self.get_ssl_truststore(),
-#                                         self.ks.ts_password,
-#                                         user, group, 0o640)
-#
-#        # Listener logic
-#        listener_opts = self.cluster.listener_opts(
-#            self.get_ssl_keystore(), self.ks.ks_password,
-#            clientauth=self.config.get("clientAuth", False))
-        # Listener logic
-        listeners, listener_opts = self.listener.get_unit_listener(
-            self.get_ssl_keystore(),
-            self.ks.ks_password,
-            get_default=True,
-            clientauth=self.config.get("clientAuth", False))
+                user, group, 0o640,
+                extra_certs=extra_certs)
+        listeners = {}
+        listener_opts = {}
+        if self.unit.is_leader():
+            # Listener logic
+            listeners, listener_opts = self.listener.get_unit_listener(
+                self.get_ssl_keystore(),
+                self.ks.ks_password,
+                get_default=True,
+                clientauth=self.config.get("clientAuth", False))
+            # update peers
+            self.cluster.set_listeners(listeners)
+        else:
+            listeners = self.cluster.get_listeners()
+            listener_opts = self.listener._generate_opts(
+                listeners,
+                self.get_ssl_keystore(),
+                self.ks.ks_password,
+                get_default=True,
+                clientauth=self.config.get("clientAuth", False))
+        logger.debug("Found listeners: {}".format(listeners))
         server_props = {**server_props, **listener_opts}
 
         # Zookeeper options:
@@ -671,6 +676,11 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         return self.service
 
     def _on_config_changed(self, event):
+        logger.debug("Event triggerd config change: {}".format(event))
+        try:
+            logger.debug("Event Data: {}".format(event.relation.data))
+        except:
+            pass
         if not self._cert_relation_set(event):
             return
         if not self.zk.relation:
@@ -709,7 +719,12 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
             # Reload and restart
             service_reload(self.service)
             service_restart(self.service)
-        if not service_running(self.service):
+        running = False
+        try:
+            running = service_running(self.service)
+        except: # noqa
+            pass
+        if not running:
             self.model.unit.status = \
                 BlockedStatus("Service not running {}".format(self.service))
         # Apply sysctl

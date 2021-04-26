@@ -1,5 +1,6 @@
 import os
 import socket
+import json
 from wand.contrib.linux import get_hostname
 
 from wand.apps.relations.kafka_relation_base import KafkaRelationBase
@@ -40,16 +41,19 @@ class KafkaBrokerCluster(KafkaRelationBase):
             return False
         return True
 
-    def set_ssl_keypair(self,
-                        ssl_cert,
-                        ts_path,
-                        ts_pwd,
-                        user, group, mode):
-        self.state.user = user
-        self.state.group = group
-        self.state.mode = mode
-        # Cluster will not manage the keys anymore
-        # self.set_TLS_auth(ssl_cert, ts_path, ts_pwd)
+    def set_ssl_cert(self,
+                     ssl_cert):
+        if self.relation:
+            if ssl_cert == self.relation.data[self.unit].get("cert", ""):
+                self.relation.data[self.unit]["cert"] = ssl_cert
+
+    def get_all_certs(self):
+        crt_list = []
+        for r in self.relations:
+            for u in r.units:
+                if "cert" in r.data[u]:
+                    crt_list.append(r.data[u]["cert"])
+        return crt_list
 
     @property
     def truststore_pwd(self):
@@ -72,9 +76,22 @@ class KafkaBrokerCluster(KafkaRelationBase):
             return 0
         return self.state.peer_num_azs
 
+    def set_listeners(self, listeners):
+        if not self.unit.is_leader() or not self.relation:
+            return
+        if listeners != json.loads(self.relation.data[self.model.app].get("listeners", "{}")):
+            self.relation.data[self.model.app]["listeners"] = json.dumps(listeners)
+
+    def get_listeners(self):
+        if not "listeners" in self.relation.data[self.model.app]:
+            return {}
+        return json.loads(self.relation.data[self.model.app]["listeners"])
+
     def listener_opts(self,
                       keystore_path, keystore_pwd, keystore_type="JKS", clientauth=False):
         # DEPRECATED METHOD
+        return
+
         listener_opts = {
             "listeners": self.state.listeners,
             "listener.security.protocol.map": self.state.listener_protocol_map,
@@ -134,33 +151,3 @@ class KafkaBrokerCluster(KafkaRelationBase):
             for u in self.relation.units:
                 az_set.add(self.relation.data[u]["az"])
             self.state.peer_num_azs = len(az_set)
-        # Creates a list similar to: [{'test': [{'a': 'b', 'c': 'd'}]}]
-        listeners = self._charm.config.get("listeners", "") or {}
-        # If this is set via option, we override
-        # those values to predefined on charms
-        listeners["internal"] = \
-            "{}:{}".format(self.hostname, 9092)
-        listeners["broker"] = \
-            "{}:{}".format(self.hostname, 9093)
-        listeners["client"] = \
-            "{}:{}".format(get_hostname(self.advertise_addr), 9094)
-        self.state.listeners = \
-            ",".join([k+"://"+v for k, v in list(listeners.items())])
-        # TODO: avoid PLAINTEXT, check:
-        # https://docs.confluent.io/platform/current/installation/ \
-        #     configuration/broker-configs.html#  \
-        #     brokerconfigs_listener.security.protocol.map
-        # TODO: add SASL if available
-        if not self.is_TLS_enabled():
-            self.state.listener_protocol_map = \
-                ",".join([k+":PLAINTEXT" for k, v in list(listeners.items())])
-        else:
-            self.state.listener_protocol_map = \
-                ",".join([k+":SSL" for k, v in list(listeners.items())])
-        # if advertised listeners is set, pass it here
-        if self._charm.config.get("advertised.listeners", None):
-            self.state.advertised_listeners = \
-                self.state.advertised_listeners + \
-                self._charm.config["advertised.listeners"]
-        else:
-            self.state.advertised_listeners = self.state.listeners
