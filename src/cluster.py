@@ -44,7 +44,7 @@ class KafkaBrokerCluster(KafkaRelationBase):
     def set_ssl_cert(self,
                      ssl_cert):
         if self.relation:
-            if ssl_cert == self.relation.data[self.unit].get("cert", ""):
+            if ssl_cert != self.relation.data[self.unit].get("cert", ""):
                 self.relation.data[self.unit]["cert"] = ssl_cert
 
     def get_all_certs(self):
@@ -79,13 +79,15 @@ class KafkaBrokerCluster(KafkaRelationBase):
     def set_listeners(self, listeners):
         if not self.unit.is_leader() or not self.relation:
             return
-        if listeners != json.loads(self.relation.data[self.model.app].get("listeners", "{}")):
-            self.relation.data[self.model.app]["listeners"] = json.dumps(listeners)
+        if listeners != self.relation.data[self.model.app].get("listeners", "{}"):
+            self.relation.data[self.model.app]["listeners"] = listeners
+#        if listeners != json.loads(self.relation.data[self.model.app].get("listeners", "{}")):
+#            self.relation.data[self.model.app]["listeners"] = json.dumps(listeners)
 
-    def get_listeners(self):
-        if not "listeners" in self.relation.data[self.model.app]:
-            return {}
-        return json.loads(self.relation.data[self.model.app]["listeners"])
+    def get_listener_template(self):
+        return self.relation.data[self.model.app].get("listeners", "")
+#            return {}
+#        return json.loads(self.relation.data[self.model.app]["listeners"])
 
     def listener_opts(self,
                       keystore_path, keystore_pwd, keystore_type="JKS", clientauth=False):

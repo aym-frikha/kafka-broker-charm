@@ -516,6 +516,7 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
             # Manage the cluster certs first:
             self.cluster.set_ssl_cert(self.get_ssl_cert())
             extra_certs = self.cluster.get_all_certs()
+            logger.debug("Extra certificates for cluster: {}".format(extra_certs))
             self.listener.set_TLS_auth(
                 self.get_ssl_cert(),
                 self.get_ssl_truststore(),
@@ -526,7 +527,7 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         listener_opts = {}
         if self.unit.is_leader():
             # Listener logic
-            listeners, listener_opts = self.listener.get_unit_listener(
+            listeners = self.listener.get_unit_listener(
                 self.get_ssl_keystore(),
                 self.ks.ks_password,
                 get_default=True,
@@ -534,13 +535,15 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
             # update peers
             self.cluster.set_listeners(listeners)
         else:
-            listeners = self.cluster.get_listeners()
-            listener_opts = self.listener._generate_opts(
-                listeners,
-                self.get_ssl_keystore(),
-                self.ks.ks_password,
-                get_default=True,
-                clientauth=self.config.get("clientAuth", False))
+            listeners = self.cluster.get_listener_template()
+        listener_opts = self.listener._generate_opts(
+            listeners,
+            self.get_ssl_keystore(),
+            self.ks.ks_password,
+            get_default=True,
+            clientauth=self.config.get("clientAuth", False))
+        # Each unit sets its own data
+        self.listener.set_bootstrap_data(listeners)
         logger.debug("Found listeners: {}".format(listeners))
         server_props = {**server_props, **listener_opts}
 
