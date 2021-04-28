@@ -45,7 +45,8 @@ from wand.security.ssl import (
 )
 from wand.apps.relations.kafka_listener import (
     KafkaListenerProvidesRelation,
-    KafkaListenerRelationNotSetError
+    KafkaListenerRelationNotSetError,
+    KafkaListenerRelationEmptyListenerDictError
 )
 from wand.apps.relations.kafka_mds import (
     KafkaMDSProvidesRelation
@@ -680,10 +681,6 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
 
     def _on_config_changed(self, event):
         logger.debug("Event triggerd config change: {}".format(event))
-        try:
-            logger.debug("Event Data: {}".format(event.relation.data))
-        except:
-            pass
         if not self._cert_relation_set(event):
             return
         if not self.zk.relation:
@@ -704,6 +701,10 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         except KafkaRelationBaseNotUsedError:
             self.model.unit.status = \
                 BlockedStatus("Relation not ready yet")
+            event.defer()
+            return
+        except KafkaListenerRelationEmptyListenerDictError:
+            logger.info("Listener info not published, deferring event")
             event.defer()
             return
         self.model.unit.status = \
