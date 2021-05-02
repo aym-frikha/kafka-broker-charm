@@ -56,7 +56,9 @@ logger = logging.getLogger(__name__)
 # Given: https://docs.confluent.io/current/ \
 #        installation/cp-ansible/ansible-configure.html
 # Setting confluent-server by default
+# confluent-cli gives access to confluent and IAM management
 CONFLUENT_PACKAGES = [
+  "confluent-cli",
   "confluent-common",
   "confluent-rest-utils",
   "confluent-metadata-service",
@@ -125,10 +127,14 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         self._on_config_changed(event)
 
     def on_listeners_relation_joined(self, event):
+        if not self._cert_relation_set(event, self.listener):
+            return
         self.listener.on_listener_relation_joined(event)
         self._on_config_changed(event)
 
     def on_listeners_relation_changed(self, event):
+        if not self._cert_relation_set(event, self.listener):
+            return
         self.listener.on_listener_relation_changed(event)
         self._on_config_changed(event)
 
@@ -566,16 +572,10 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
             except KafkaRelationBaseTLSNotSetError as e:
                 self.model.unit.status = BlockedStatus(str(e))
 
-        if self.is_sasl_enabled():
-            logger.info("SASL enabled")
-            if self.distro == "confluent":
-                server_props["authorizer.class.name"] = \
-                    "io.confluent.kafka.security.authorizer" + \
-                    ".ConfluentServerAuthorizer"
-                server_props["confluent.authorizer.access.rule.providers"] = \
-                    "CONFLUENT,ZK_ACL"
-            elif self.distro == "apache":
-                raise Exception("Not Implemented Yet")
+        if len(self.config.get("authorizer-class-name", "")) > 0:
+            server_props["authorizer.class.name"] = \
+                self.config.get("authorizer-class-name", "")
+
         server_props["zookeeper.connect"] = self.zk.get_zookeeper_list
         server_props["zookeeper.set.acl"] = self.zk.is_sasl_enabled()
 

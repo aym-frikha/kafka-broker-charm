@@ -29,6 +29,30 @@ options:
     description: |
       There are two possible values: package or archive. If archive, it will upload the tarball set
       in the resource of this charm. Archive method is EXPERIMENTAL for this charm.
+  authorizer-class-name:
+    default: ''
+    type: string
+    description: |
+      If unset, this option will not be added. Otherwise, use it to set the authorizer mechanism.
+      For example: io.confluent.kafka.security.ldap.authorizer.LdapAuthorizer
+      Will allow to set LDAP authorization for Confluent environment. More details:
+      https://docs.confluent.io/platform/current/security/ldap-authorizer/quickstart.html
+  cluster-auth-method:
+    default: ''
+    type: string
+    description: |
+      Sets interbroker authentication.
+      As described on: https://docs.confluent.io/ansible/current/ansible-authorize.html
+      For confluent distro, the options are: SASL PLAIN, SASL SCRAM, SASL GSSAPI, and mTLS
+      mTLS is considered EXPERIMENTAL.
+  external-auth-method:
+    default: ''
+    type: string
+    description: |
+      Sets authentication for external listeners.
+      As described on: https://docs.confluent.io/ansible/current/ansible-authorize.html
+      For confluent distro, the options are: SASL PLAIN, SASL SCRAM, SASL GSSAPI, and mTLS
+      mTLS is considered EXPERIMENTAL.
   keystore-path:
     default: ''
     type: string
