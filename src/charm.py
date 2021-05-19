@@ -7,6 +7,7 @@ import logging
 import os
 import socket
 import yaml
+import json
 
 from ops.main import main
 from ops.model import (
@@ -18,19 +19,20 @@ from ops.model import (
 from charmhelpers.core.templating import render
 
 from charmhelpers.core.host import (
-    service_running,
-    service_restart,
-    service_reload,
-    service_resume
+    service_running
 )
 
-from wand.apps.kafka import KafkaJavaCharmBase
+from wand.apps.kafka import (
+    KafkaJavaCharmBase,
+    KafkaCharmBaseMissingConfigError
+)
 from cluster import KafkaBrokerCluster
 from wand.apps.relations.zookeeper import ZookeeperRequiresRelation
 from wand.apps.relations.kafka_relation_base import (
     KafkaRelationBaseNotUsedError,
     KafkaRelationBaseTLSNotSetError
 )
+#from coordinator import KafkaBrokerCoordinator
 
 from wand.apps.relations.tls_certificates import (
     TLSCertificateRequiresRelation,
@@ -39,18 +41,23 @@ from wand.apps.relations.tls_certificates import (
 )
 
 from wand.security.ssl import (
+    setFilePermissions,
     genRandomPassword,
     generateSelfSigned,
     PKCS12CreateKeystore
 )
 from wand.apps.relations.kafka_listener import (
     KafkaListenerProvidesRelation,
-    KafkaListenerRelationNotSetError,
     KafkaListenerRelationEmptyListenerDictError
 )
 from wand.apps.relations.kafka_mds import (
     KafkaMDSProvidesRelation
 )
+from wand.contrib.coordinator import (
+    RestartCharmEvent,
+    OpsCoordinator
+)
+
 logger = logging.getLogger(__name__)
 
 # Given: https://docs.confluent.io/current/ \
@@ -72,7 +79,16 @@ CONFLUENT_PACKAGES = [
 ]
 
 
+class KafkaBrokerCharmMDSNotSupportedError(Exception):
+
+    def __init__(self, distro):
+        message = "MDS is not supported on " + \
+                  "{} distribution, only Confluent".format(distro)
+        super().__init__(message)
+
+
 class KafkaBrokerCharm(KafkaJavaCharmBase):
+    on = RestartCharmEvent()
 
     def _install_tarball(self):
         # Use _generate_service_files here
@@ -104,6 +120,10 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
                                self.on_listeners_relation_joined)
         self.framework.observe(self.on.listeners_relation_changed,
                                self.on_listeners_relation_changed)
+        self.framework.observe(self.on.restart_event,
+                               self.on_restart_event)
+        self.framework.observe(self.on.upload_keytab_action,
+                               self.on_upload_keytab_action)
         self.cluster = KafkaBrokerCluster(self, 'cluster',
                                           self.config.get("cluster-count", 3))
         self.zk = ZookeeperRequiresRelation(self, 'zookeeper')
@@ -115,8 +135,27 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         self.ks.set_default(ssl_key="")
         self.ks.set_default(ts_zookeeper_pwd=genRandomPassword())
         self.ks.set_default(ks_zookeeper_pwd=genRandomPassword())
+        self.ks.set_default(changed_params="{}")
         self.listener = KafkaListenerProvidesRelation(self, 'listeners')
         self.mds = KafkaMDSProvidesRelation(self, 'mds')
+        self.ks.set_default(config_state="{}")
+
+    def on_upload_keytab_action(self, event):
+        try:
+            self._upload_keytab_base64(
+                event.params["keytab"], filename="kafka_broker.keytab")
+        except Exception as e:
+            # Capture any exceptions and return them via action
+            event.fail("Failed with: {}".format(str(e)))
+            return
+        self._on_config_changed(event)
+        event.set_results({"keytab": "Uploaded!"})
+
+    def on_restart_event(self, event):
+        if event.restart():
+            self.ks.config_state = event.ctx
+        else:
+            event.defer()
 
     def on_certificates_relation_joined(self, event):
         self.certificates.on_tls_certificate_relation_joined(event)
@@ -147,6 +186,9 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         return
 
     def on_update_status(self, event):
+        # Check if the locks must be handled or not
+        coordinator = OpsCoordinator()
+        coordinator.handle_locks(self.unit)
         if not service_running(self.service):
             self.model.unit.status = \
                 BlockedStatus("{} not running".format(self.service))
@@ -220,8 +262,9 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
 
     def _cert_relation_set(self, event, rel=None):
         # generate cert request if tls-certificates available
-        # rel may be set to None in cases such as config-changed or install events
-        # In these cases, the goal is to run the validation at the end of this method
+        # rel may be set to None in cases such as config-changed
+        # or install events. In these cases, the goal is to run
+        # the validation at the end of this method
         if rel:
             if self.certificates.relation and rel.relation:
                 sans = [
@@ -237,17 +280,21 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
                     sans=sans)
             logger.info("Either certificates "
                         "relation not ready or not set")
-        # This try/except will raise an exception if tls-certificate is set and there is no
-        # certificate available on the relation yet. That will also cause the
+        # This try/except will raise an exception if tls-certificate
+        # is set and there is no certificate available on the relation yet.
+        # That will also cause the
         # event to be deferred, waiting for certificates relation to finish
-        # If tls-certificates is not set, then the try will run normally, either
-        # marking there is no certificate configuration set or concluding the method.
+        # If tls-certificates is not set, then the try will run normally,
+        # either marking there is no certificate configuration set or
+        # concluding the method.
         try:
             if (not self.get_ssl_cert() or not self.get_ssl_key() or
                not self.get_zk_cert() or not self.get_zk_key()):
                 self.model.unit.status = \
-                    BlockedStatus("Waiting for certificates relation or option")
-                logger.info("Waiting for certificates relation to publish data")
+                    BlockedStatus("Waiting for certificates "
+                                  "relation or option")
+                logger.info("Waiting for certificates relation "
+                            "to publish data")
                 return False
         # These excepts will treat the case tls-certificates relation is used
         # but the relation is not ready yet
@@ -366,11 +413,18 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
                             self.config.get("fs-options", None))
         self._on_config_changed(event)
 
-    def _check_if_ready_to_start(self):
+    def _check_if_ready_to_start(self, ctx):
         if not self.cluster.is_ready:
-            BlockedStatus("Waiting for cluster relation")
+            self.model.unit.status = \
+                BlockedStatus("Waiting for other cluster units")
             return False
-        ActiveStatus("{} running".format(self.service))
+        # ctx can be a string or dict, then check and convert accordingly
+        c = json.dumps(ctx) if isinstance(ctx, dict) else ctx
+        if c == self.ks.config_state:
+            logger.debug("Current state: {}, saved state: {}".format(
+                c, self.ks.config_state
+            ))
+            return False
         return True
 
     def _rel_get_remote_units(self, rel_name):
@@ -385,7 +439,8 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         certs = self.certificates.get_server_certs()
         c = certs[self.cluster.binding_addr]["cert"] + \
             self.certificates.get_chain()
-        logger.debug("SSL Certificate chain from tls-certificates: {}".format(c))
+        logger.debug("SSL Certificate chain from "
+                     "tls-certificates: {}".format(c))
         return c
 
     def get_ssl_key(self):
@@ -399,23 +454,19 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         return k
 
     def get_ssl_keystore(self):
-        path = self.config.get("keystore-path",
-                               "/var/ssl/private/kafka_ssl_ks.jks")
+        path = self.config.get("keystore-path", "")
         return path
 
     def get_ssl_truststore(self):
-        path = self.config.get("truststore-path",
-                               "/var/ssl/private/kafka_ssl_ks.jks")
+        path = self.config.get("truststore-path", "")
         return path
 
     def get_zk_keystore(self):
-        path = self.config.get("keystore-zookeeper-path",
-                               "/var/ssl/private/kafka_zk_ks.jks")
+        path = self.config.get("keystore-zookeeper-path", "")
         return path
 
     def get_zk_truststore(self):
-        path = self.config.get("truststore-zookeeper-path",
-                               "/var/ssl/private,kafka_zk_ts.jks")
+        path = self.config.get("truststore-zookeeper-path", "")
         return path
 
     def get_zk_cert(self):
@@ -423,11 +474,13 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
             return self.ks.zk_cert
         if len(self.config.get("ssl_cert")) > 0 and \
            len(self.config.get("ssl_key")) > 0:
-            return base64.b64decode(self.config["ssl_cert"]).decode("ascii")
+            return base64.b64decode(
+                self.config["ssl_cert"]).decode("ascii")
         certs = self.certificates.get_server_certs()
         c = certs[self.zk.binding_addr]["cert"] + \
             self.certificates.get_chain()
-        logger.debug("SSL Certificate chain from tls-certificates: {}".format(c))
+        logger.debug("SSL Certificate chain from "
+                     "tls-certificates: {}".format(c))
         return c
 
     def get_zk_key(self):
@@ -435,10 +488,21 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
             return self.ks.zk_key
         if len(self.config.get("ssl_cert")) > 0 and \
            len(self.config.get("ssl_key")) > 0:
-            return base64.b64decode(self.config["ssl_key"]).decode("ascii")
+            return base64.b64decode(
+                self.config["ssl_key"]).decode("ascii")
         certs = self.certificates.get_server_certs()
         k = certs[self.zk.binding_addr]["key"]
         return k
+
+    def get_oauth_token_cert(self):
+        # TODO: implement cert/key generation and
+        # management through this getters
+        raise Exception("Not Implemented Yet")
+
+    def get_oauth_token_key(self):
+        # TODO: implement cert/key generation and
+        # management through this getters
+        raise Exception("Not Implemented Yet")
 
     def _generate_server_properties(self, event):
         # TODO: set
@@ -514,16 +578,19 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         # TODO: Enable rest proxy if we have RBAC:
         # https://github.com/confluentinc/cp-ansible/blob/ \
         #     b711fc9e3b43d2069a9ac8b13177e7f2a07c7bfb/VARIABLES.md
-        server_props["kafka_broker_rest_proxy_enabled"] = False
+#        server_props["kafka_broker_rest_proxy_enabled"] = False
+
         # Cluster certificate: this is set using BROKER listener
-        if (len(self.get_ssl_cert()) > 0 and len(self.get_ssl_key()) > 0) and self.get_ssl_truststore():
+        if (len(self.get_ssl_cert()) > 0 and self.listener.relations and 
+           len(self.get_ssl_key()) > 0) and self.get_ssl_truststore():
             logger.info("Setting SSL for client connections")
             user = self.config.get("user", "")
             group = self.config.get("group", "")
             # Manage the cluster certs first:
             self.cluster.set_ssl_cert(self.get_ssl_cert())
             extra_certs = self.cluster.get_all_certs()
-            logger.debug("Extra certificates for cluster: {}".format(extra_certs))
+            logger.debug("Extra certificates "
+                         "for cluster: {}".format(extra_certs))
             self.listener.set_TLS_auth(
                 self.get_ssl_cert(),
                 self.get_ssl_truststore(),
@@ -534,11 +601,50 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         listener_opts = {}
         if self.unit.is_leader():
             # Listener logic
-            listeners = self.listener.get_unit_listener(
+            # Convert it to dict and then back to string after the loop below
+            listeners_d = json.loads(self.listener.get_unit_listener(
                 self.get_ssl_keystore(),
                 self.ks.ks_password,
                 get_default=True,
-                clientauth=self.config.get("clientAuth", False))
+                clientauth=self.config.get("clientAuth", False)))
+            # Set EXTERNAL and BROKER listeners'
+            for i in [("broker", "cluster-auth-method"),
+                      ("external", "external-auth-method")]:
+                lst = listeners_d[i[0]]
+                conf = i[1]
+                if self.config[conf].lower() == "gssapi" and \
+                   self.is_sasl_kerberos_enabled():
+                    principal = "{}/{}@{}".format(
+                        self.config["kerberos-protocol"],
+                        self.config["kerberos-domain"],
+                        self.config["kerberos-realm"])
+                    lst["secprot"] = "SASL_SSL"
+                    lst["SASL"] = {
+                        "protocol": "GSSAPI",
+                        "kerberos-protocol": self.config["kerberos-protocol"],
+                        "kerberos-principal": principal,
+                        "kerberos-realm": self.config["kerberos-realm"],
+                    }
+                elif self.config[conf].lower() == "bearer" and \
+                        self.is_sasl_oauthbearer_enabled():
+                    lst["SASL"]["protocol"] = "OAUTHBEARER"
+                    lst["secprot"] = "SASL_SSL"
+                    if self.config["oauth-token-verify"]:
+                        lst["SASL"]["publicKeyPath"] = \
+                            self.get_oauth_token_cert()
+                    if self.distro == "confluent":
+                        # Add Confluent-specific settings:
+                        lst["SASL"]["confluent"] = {
+                            "login.callback": \
+                                "io.confluent.kafka.server.plugins.auth.token.TokenBearerServerLoginCallbackHandler", # noqa
+                            "server.callback": \
+                                "io.confluent.kafka.server.plugins.auth.token.TokenBearerValidatorCallbackHandler" # noqa
+                        }
+                elif len(self.config[conf]) > 0:
+                    # TODO: implement this mechanism
+                    raise Exception("Not implemented yet")
+            listeners = json.dumps(listeners_d)
+            logger.debug("Listener changed auth methods to: {}".format(listeners))
             # update peers
             self.cluster.set_listeners(listeners)
         else:
@@ -549,17 +655,67 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
             self.ks.ks_password,
             get_default=True,
             clientauth=self.config.get("clientAuth", False))
+        if len(self.listener.get_sasl_mechanisms_list()) > 0:
+            server_props["sasl.enabled.mechanisms"] = ",".join(
+                self.listener.get_sasl_mechanism_list())
+            server_props["sasl.kerberos.service.name"] = "HTTP"
+            if "protocol" in listeners["broker"]["SASL"]:
+                server_props["sasl.mechanism."
+                             "inter.broker.protocol"] = \
+                    listeners["broker"]["SASL"]
+
         # Each unit sets its own data
         self.listener.set_bootstrap_data(listeners)
         logger.debug("Found listeners: {}".format(listeners))
         server_props = {**server_props, **listener_opts}
 
+        # Metadata service relation
+        if self.mds.relations and self.distro != "confluent":
+            raise KafkaBrokerCharmMDSNotSupportedError(self.distro)
+        if self.mds.relations:
+            # MDS will use the same set of certificates for listeners
+            protocol = "https" if len(self.get_ssl_key()) > 0 else "http"
+            server_props["confluent.metadata.server.advertised.listeners"] = \
+                "{}://{}:8090".format(protocol, self.listener.hostname)
+            server_props["confluent.metadata."
+                         "server.authentication.method"] = "BEARER"
+            server_props["confluent.metadata.server.listeners"] = \
+                "{}://{}:8090".format(protocol, self.listener.hostname)
+            server_props["confluent.metadata."
+                         "server.ssl.key.password"] = self.ks.ks_password
+            server_props["confluent.metadata."
+                         "server.ssl.keystore.location"] = \
+                self.get_ssl_keystore()
+            server_props["confluent.metadata."
+                         "server.ssl.keystore.password"] = \
+                self.ks.ks_password
+            server_props["confluent.metadata."
+                         "server.ssl.truststore.location"] = \
+                self.get_ssl_truststore()
+            server_props["confluent.metadata."
+                         "server.ssl.truststore.password"] = \
+                self.ks.ts_password
+            if self.config["oauth-token-verify"]:
+                server_props["confluent.metadata.server.token.auth.enable"] = \
+                    self.config["oauth-token-verify"]
+                server_props["confluent.metadata.server.public.key.path"] = \
+                    self.get_oauth_token_cert()
+                server_props["confluent.metadata.server.token.key.path"] = \
+                    self.get_oauth_token_key()
+                server_props["confluent.metadata."
+                             "server.token.max.lifetime.ms"] = \
+                    "3600000"
+                server_props["confluent.metadata."
+                             "server.token.signature.algorithm"] = "RS256"
+                server_props["confluent.metadata."
+                             "topic.replication.factor"] = "3"
+
         # Zookeeper options:
         self.model.unit.status = \
             MaintenanceStatus("render_server_properties: Start ZK configs")
         if self.get_zk_cert() and self.get_zk_key():
-            self.zk.user = self.config.get("user", user)
-            self.zk.group = self.config.get("group", group)
+            self.zk.user = self.config.get("user", "root")
+            self.zk.group = self.config.get("group", "root")
             self.zk.mode = 0o640
             try:
                 self.zk.set_mTLS_auth(
@@ -625,39 +781,40 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
                context={
                    "server_props": server_props
                })
-
-    def is_sasl_enabled(self):
-        if self.is_sasl_kerberos_enabled() or \
-           self.is_sasl_oauthbearer_enabled() or \
-           self.is_sasl_scram_enabled() or \
-           self.is_sasl_plain_enabled() or \
-           self.is_sasl_delegate_token_enabled() or \
-           self.is_sasl_ldap_enabled():
-            return True
-        return False
+        return server_props
 
     def _generate_client_properties(self):
         logger.info("Generating client.properties")
-        self.model.unit.statu = \
+        self.model.unit.status = \
             MaintenanceStatus("Generating client.properties")
         client_props = yaml.safe_load(self.config["client-properties"]) or {}
-        if self.is_sasl_enabled():
-            client_props["sasl.jaas.config"] = \
-                self.config.get("sasl-jaas-config", "")
-        if self.is_sasl_kerberos_enabled():
+#        if self.is_sasl_enabled():
+#            client_props["sasl.jaas.config"] = \
+#                self.config.get("sasl-jaas-config", "")
+        if self.zk.is_sasl_kerberos_enabled():
             client_props["sasl.mechanism"] = "GSSAPI"
             client_props["sasl.kerberos.service.name"] = \
                 self.config.get("sasl-kbros-service", "HTTP")
+            client_props["security.protocol"] = "SASL_SSL"
+            sasl_config = \
+                "com.sun.security.auth.module.Krb5LoginModule required " + \
+                "useKeyTab=true " + \
+                'keyTab="/etc/security/keytabs/{}" ' + \
+                'storeKey=true ' + \
+                'useTicketCache=false ' + \
+                'principal="{}";'
+            client_props["sasl.jaas.config"] = \
+                sasl_config.format(self.keytab, self.kerberos_principal)
         if self.is_ssl_enabled():
-            client_props["ssl.keystore.location"] = \
-                self.config.get("keystore-path",
-                                "/var/ssl/private/kafka_ks.jks")
-            client_props["ssl.keystore.password"] = self.ks.ks_password
-            if len(self.config.get("truststore-path", "")) > 0:
+#            client_props["ssl.keystore.location"] = \
+#                self.config.get("keystore-path",
+#                                "/var/ssl/private/kafka_ks.jks")
+#            client_props["ssl.keystore.password"] = self.ks.ks_password
+            if len(self.get_zk_truststore()) > 0:
                 client_props["ssl.truststore.location"] = \
-                    self.config.get("truststore-path",
-                                    "/var/ssl/private/kafka_ts.jks")
-                client_props["ssl.truststore.password"] = self.ks.ts_password
+                     self.get_zk_truststore()
+                client_props["ssl.truststore.password"] = \
+                    self.ks.ts_zookeeper_pwd
             else:
                 logger.debug("truststore-path not set, "
                              "using Java own truststore instead")
@@ -671,6 +828,7 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
                context={
                    "client_props": client_props
                })
+        return client_props
 
     def _get_service_name(self):
         if self.distro == "confluent":
@@ -679,10 +837,58 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
             self.service = "kafka"
         return self.service
 
+    def _render_jaas_conf(self, jaas_path="/etc/kafka/jaas.conf"):
+        content = ""
+        if self.is_sasl_kerberos_enabled():
+            krb = """KafkaServer {{
+    com.sun.security.auth.module.Krb5LoginModule required
+    useKeyTab=true
+    keyTab="/etc/security/keytabs/{}"
+    storeKey=true
+    useTicketCache=false
+    principal="{}";
+}};
+""".format(self.keytab, self.kerberos_principal) # noqa
+            content += krb
+            if self.zk.is_sasl_kerberos_enabled():
+                content += """Client {{
+    com.sun.security.auth.module.Krb5LoginModule required
+    useKeyTab=true
+    keyTab="/etc/security/keytabs/{}"
+    storeKey=true
+    useTicketCache=false
+    principal="{}";
+}};
+""".format(self.keytab, self.kerberos_principal) # noqa
+        self.set_folders_and_permissions([os.path.dirname(jaas_path)])
+        with open(jaas_path, "w") as f:
+            f.write(content)
+        setFilePermissions(jaas_path, self.config.get("user", "root"),
+                           self.config.get("group", "root"), 0o640)
+        return content
+
     def _on_config_changed(self, event):
         logger.debug("Event triggerd config change: {}".format(event))
+        try:
+            if self.is_sasl_kerberos_enabled() and not self.keytab:
+                self.model.unit.status = \
+                    BlockedStatus("Kerberos set, waiting for keytab "
+                                  "upload action")
+                # We can drop this event given that an action will happen
+                # or a config change
+                return
+        except KafkaCharmBaseMissingConfigError as e:
+            # This error is raised if some but not all the configs needed for
+            # Kerberos were enabled
+            self.model.unit.status = \
+                BlockedStatus("Kerberos config missing: {}".format(str(e)))
+            return
         if not self._cert_relation_set(event):
             return
+#        # handle method must be called before any of the hooks
+#        # Running here ensures the handle() is always ran before the relevant
+#        # part for the lock management
+#        KafkaBrokerCoordinator().handle()
         if not self.zk.relation:
             # It does not make sense to progress until zookeeper is set
             self.model.unit.status = \
@@ -696,42 +902,83 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
 
         self.cluster.enable_az = self.config.get(
             "customize-failure-domain", False)
+
+        # START CONFIG FILE UPDATES
+        ctx = {}
+        ctx = super()._on_config_changed(event)
         try:
-            self._generate_server_properties(event)
+            ctx["server_opts"] = self._generate_server_properties(event)
         except KafkaRelationBaseNotUsedError:
             self.model.unit.status = \
                 BlockedStatus("Relation not ready yet")
-            event.defer()
+#            event.defer()
             return
         except KafkaListenerRelationEmptyListenerDictError:
             logger.info("Listener info not published, deferring event")
-            event.defer()
+#            event.defer()
             return
         self.model.unit.status = \
             MaintenanceStatus("Render client properties")
-        self._generate_client_properties()
+        ctx["client_opts"] = self._generate_client_properties()
         self.model.unit.status = \
             MaintenanceStatus("Render service override.conf")
-        self.render_service_override_file(
+        ctx["svc_opts"] = self.render_service_override_file(
             target="/etc/systemd/system/"
                    "{}.service.d/override.conf".format(self.service))
-        if self._check_if_ready_to_start():
+        ctx["keytab_opts"] = self.keytab_b64
+
+        # Now, restart service
+        self.model.unit.status = \
+            MaintenanceStatus("Building context...")
+        logger.debug("Context: {}, saved state is: {}".format(
+            ctx, self.ks.config_state
+        ))
+        if self._check_if_ready_to_start(ctx):
+            self.on.restart_event.emit(ctx, services=[self.service])
             self.model.unit.status = \
-                MaintenanceStatus("Starting services...")
-            # Unmask and enable service
-            service_resume(self.service)
-            # Reload and restart
-            service_reload(self.service)
-            service_restart(self.service)
-        running = False
-        try:
-            running = service_running(self.service)
-        except: # noqa
-            pass
-        if not running:
+                BlockedStatus("Waiting for restart event")
+            return
+        elif service_running(self.service):
             self.model.unit.status = \
-                BlockedStatus("Service not running {}".format(self.service))
+                        ActiveStatus("Service is running")
+        else:
+            self.model.unit.status = \
+                BlockedStatus("Service not running that "
+                              "should be: {}".format(self.service))
+        # Now, we need to always handle the locks, even if acquire() was not
+        # called since _check_if_ready_to_start returned False.
+        # Therefore, we need to manually handle those locks.
+        # If _check_if_ready_to_start returns True, then the locks will be
+        # managed at the restart event and config-changed is closed with a
+        # return.
+        coordinator = OpsCoordinator()
+        coordinator.resume()
+        coordinator.release()
+
         # Apply sysctl
+
+#        if self._check_if_ready_to_start(changed):
+#            # Needed to be done on every config-changed
+#            KafkaBrokerCoordinator().acquire('restart')
+#            if KafkaBrokerCoordinator().granted('restart'):
+#                self.model.unit.status = \
+#                    MaintenanceStatus("Starting services...")
+#                # Unmask and enable service
+#                service_resume(self.service)
+#                # Reload and restart
+#                service_reload(self.service)
+#                service_restart(self.service)
+#        running = False
+#        try:
+#            running = service_running(self.service)
+#        except: # noqa
+#            pass
+#        if not running:
+#            self.model.unit.status = \
+#                BlockedStatus("Service not running {}".format(self.service))
+#        if self.config["manual_restart"]:
+#            self.model.unit.status = \
+#                BlockedStatus("Waiting for manual restart")
 
 
 if __name__ == "__main__":

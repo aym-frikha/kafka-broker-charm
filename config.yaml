@@ -23,12 +23,56 @@ options:
     type: int
     description: |
       The minimum amount of units to bootstrap the cluster
+  super-users:
+    default: ""
+    type: string
+    description: |
+      List of users to be added as super users with full admin permissions, example: User:mds;User:HTTP
+      In case SASL is enabled, this list MUST CONTAIN all brokers' principals.
   install-method:
     default: 'package'
     type: string
     description: |
       There are two possible values: package or archive. If archive, it will upload the tarball set
       in the resource of this charm. Archive method is EXPERIMENTAL for this charm.
+  sasl-protocol:
+    default: ''
+    type: string
+    description: |
+      Define which of the SASL protocols should be used for authentication. In the case of Zookeeper,
+      only kerberos and digest methods are available.
+  kerberos-admin-hostname:
+    default: ''
+    type: string
+    description: |
+      Set the kerberos admin hostname to authenticate with.
+  kerberos-kdc-hostname:
+    default: ''
+    type: string
+    description: |
+      Set the kerberos kdc hostname to authenticate with.
+  kerberos-protocol:
+    default: ''
+    type: string
+    description: |
+      Set the kerberos protocol. This will form the principal such as: {{protocol}}/<hostname>@<realm>
+  kerberos-realm:
+    default: ''
+    type: string
+    description: |
+      Set the kerberos realm value.
+  kerberos-domain:
+    default: ''
+    type: string
+    description: |
+      Defines the kerberos domain for the host: {{protocol}}/<name of the host>.<kerberos-domain>@<realm>
+      The value set here should be the domain for the default gateway's IP.
+  manual_restart:
+    default: False
+    type: boolean
+    description: |
+      If set to true, then no restarts will be applied and the cluster will be marked as blocked until
+      restart action has been ran.
   authorizer-class-name:
     default: ''
     type: string
@@ -43,7 +87,7 @@ options:
     description: |
       Sets interbroker authentication.
       As described on: https://docs.confluent.io/ansible/current/ansible-authorize.html
-      For confluent distro, the options are: SASL PLAIN, SASL SCRAM, SASL GSSAPI, and mTLS
+      For confluent distro, the options are: SASL PLAIN, SASL SCRAM, SASL GSSAPI, BEARER, and mTLS
       mTLS is considered EXPERIMENTAL.
   external-auth-method:
     default: ''
@@ -51,8 +95,19 @@ options:
     description: |
       Sets authentication for external listeners.
       As described on: https://docs.confluent.io/ansible/current/ansible-authorize.html
-      For confluent distro, the options are: SASL PLAIN, SASL SCRAM, SASL GSSAPI, and mTLS
+      For confluent distro, the options are: SASL PLAIN, SASL SCRAM, SASL GSSAPI, BEARER, and mTLS
       mTLS is considered EXPERIMENTAL.
+  rbac-enabled:
+    default: false
+    type: boolean
+    description: |
+      **Confluent Only** Enables Confluent RBAC feature. MDS relation must be set across the platform
+      components in order for rbac to be set correctly.
+  oauth-token-verify:
+    default: False
+    type: boolean
+    description: |
+      Validate the OAUTHBEARER token using a set of cert and key auto-generated.
   keystore-path:
     default: ''
     type: string
@@ -283,5 +338,4 @@ options:
       zookeeper.connection.timeout.ms: 18000
       confluent.support.metrics.enable: true
       confluent.support.customer.id: anonymous
-      super.users: User:mds;User:HTTP
 

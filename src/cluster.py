@@ -1,6 +1,5 @@
 import os
 import socket
-import json
 from wand.contrib.linux import get_hostname
 
 from wand.apps.relations.kafka_relation_base import KafkaRelationBase
@@ -79,18 +78,18 @@ class KafkaBrokerCluster(KafkaRelationBase):
     def set_listeners(self, listeners):
         if not self.unit.is_leader() or not self.relation:
             return
-        if listeners != self.relation.data[self.model.app].get("listeners", "{}"):
+        if listeners != self.relation.data[
+           self.model.app].get("listeners", "{}"):
             self.relation.data[self.model.app]["listeners"] = listeners
-#        if listeners != json.loads(self.relation.data[self.model.app].get("listeners", "{}")):
-#            self.relation.data[self.model.app]["listeners"] = json.dumps(listeners)
 
     def get_listener_template(self):
         return self.relation.data[self.model.app].get("listeners", "")
-#            return {}
-#        return json.loads(self.relation.data[self.model.app]["listeners"])
 
     def listener_opts(self,
-                      keystore_path, keystore_pwd, keystore_type="JKS", clientauth=False):
+                      keystore_path,
+                      keystore_pwd,
+                      keystore_type="JKS",
+                      clientauth=False):
         # DEPRECATED METHOD
         return
 
@@ -115,7 +114,8 @@ class KafkaBrokerCluster(KafkaRelationBase):
                 _opts[name + ".ssl.keystore.password"] = \
                     keystore_pwd
                 _opts[name + ".ssl.keystore.type"] = keystore_type
-                _opts[name + ".ssl.client.auth"] = "required" if clientauth else "none"
+                _opts[name + ".ssl.client.auth"] = \
+                    "required" if clientauth else "none"
                 ssl_opts = {**_opts, **ssl_opts}
             listener_opts = {**ssl_opts, **listener_opts}
         return listener_opts

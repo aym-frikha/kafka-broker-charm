@@ -1,14 +1,13 @@
-# Copyright 2021 pguimaraes
-# See LICENSE file for licensing details.
-#
-# This is only an example, and you should edit to suit your needs.
-# If you don't need actions, you can remove the file entirely.
-# It ties in to the example _on_fortune_action handler in src/charm.py
-# 
-# fortune:
-#   description: Returns a pithy phrase.
-#   params:
-#     fail:
-#       description: "Fail with this message"
-#       type: string
-#       default: ""
+upload-keytab:
+  description: |
+    Push the keytab file in base64 format. 
+    First, ensure that the keytab to be uploaded's hostname matches the unit hostname. For that,
+    discover the unit's FQDN with:
+    juju ssh kafka-broker/0 -- hostname -f    
+    Command should be similar to:
+    juju run-action --wait <unit> upload-keytab keytab="$(cat KEYTAB_FILE | base64 -w0)"
+    params:
+      keytab:
+        type: string
+        description: base64-encoded of keytab file content
+    required: [keytab]
