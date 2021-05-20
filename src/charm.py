@@ -32,7 +32,6 @@ from wand.apps.relations.kafka_relation_base import (
     KafkaRelationBaseNotUsedError,
     KafkaRelationBaseTLSNotSetError
 )
-#from coordinator import KafkaBrokerCoordinator
 
 from wand.apps.relations.tls_certificates import (
     TLSCertificateRequiresRelation,
@@ -44,7 +43,8 @@ from wand.security.ssl import (
     setFilePermissions,
     genRandomPassword,
     generateSelfSigned,
-    PKCS12CreateKeystore
+    PKCS12CreateKeystore,
+    CreateTruststore
 )
 from wand.apps.relations.kafka_listener import (
     KafkaListenerProvidesRelation,
@@ -581,22 +581,58 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
 #        server_props["kafka_broker_rest_proxy_enabled"] = False
 
         # Cluster certificate: this is set using BROKER listener
-        if (len(self.get_ssl_cert()) > 0 and self.listener.relations and 
+        if (len(self.get_ssl_cert()) > 0 and
            len(self.get_ssl_key()) > 0) and self.get_ssl_truststore():
             logger.info("Setting SSL for client connections")
             user = self.config.get("user", "")
             group = self.config.get("group", "")
-            # Manage the cluster certs first:
+            # Manage the cluster certs first, set_ssl_cert
+            # checks if relation exists
             self.cluster.set_ssl_cert(self.get_ssl_cert())
             extra_certs = self.cluster.get_all_certs()
             logger.debug("Extra certificates "
                          "for cluster: {}".format(extra_certs))
-            self.listener.set_TLS_auth(
-                self.get_ssl_cert(),
-                self.get_ssl_truststore(),
-                self.ks.ts_password,
-                user, group, 0o640,
-                extra_certs=extra_certs)
+            # There are 3x possible situations to manage certs:
+            # 1) listener relation exists: push certs there
+            # 2) cluster only relation exists: use it to generate certs
+            # 3) None of the above: it is a single node
+            if self.listener.relations:
+                logger.info("Listener relation found: manage certs")
+                self.listener.set_TLS_auth(
+                    self.get_ssl_cert(),
+                    self.get_ssl_truststore(),
+                    self.ks.ts_password,
+                    user, group, 0o640,
+                    extra_certs=extra_certs)
+            elif self.cluster.relation:
+                logger.info("Listener relation not found"
+                            " but cluster is present: manage certs")
+                extra_certs = self.cluster.get_all_certs()
+                extra_certs.append(self.get_ssl_cert())
+                self.listener.user = self.config["user"]
+                self.listener.group = self.config["group"]
+                self.listener.mode = 0o640
+                self.listener.ts_path = self.get_ssl_truststore()
+                self.listener.ts_pwd = self.ks.ts_password
+#                self.cluster._get_all_tls_certs()
+                CreateTruststore(self.get_ssl_truststore(),
+                                 self.ks.ts_password,
+                                 extra_certs,
+                                 ts_regenerate=True,
+                                 user=self.config["user"],
+                                 group=self.config["group"],
+                                 mode=0o640)
+            else:
+                logger.info("Neither Listener nor Cluster relations "
+                            "create the truststore manually.")
+                CreateTruststore(self.get_ssl_truststore(),
+                                 self.ks.ts_password,
+                                 [self.get_ssl_cert()],
+                                 ts_regenerate=True,
+                                 user=self.config["user"],
+                                 group=self.config["group"],
+                                 mode=0o640)
+
         listeners = {}
         listener_opts = {}
         if self.unit.is_leader():
@@ -644,7 +680,8 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
                     # TODO: implement this mechanism
                     raise Exception("Not implemented yet")
             listeners = json.dumps(listeners_d)
-            logger.debug("Listener changed auth methods to: {}".format(listeners))
+            logger.debug("Listener changed auth"
+                         "methods to: {}".format(listeners))
             # update peers
             self.cluster.set_listeners(listeners)
         else:

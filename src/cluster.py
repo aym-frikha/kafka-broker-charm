@@ -63,7 +63,12 @@ class KafkaBrokerCluster(KafkaRelationBase):
         return self.state.ts_path
 
     def _get_all_tls_certs(self):
-        super()._get_all_tls_cert()
+        crt_list = []
+        # Cluster relation uses "cert" tag instead of "tls_cert"
+        for u in self.relation.units:
+            if "tls_cert" in self.relation.data[u]:
+                crt_list.append(self.relation.data[u]["cert"])
+        super()._get_all_tls_cert(crt_list)
 
     @property
     def num_peers(self):
