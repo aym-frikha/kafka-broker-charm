@@ -16,6 +16,10 @@ provides:
     interface: listeners
   mds:
     interface: mds
+  prometheus-manual:
+    interface: prometheus-manual
+  nrpe-external-master:
+    interface: nrpe-external-master
 requires:
   zookeeper:
     interface: zookeeper

@@ -2,20 +2,28 @@ series: bionic
 variables:
   version:  &version  "6.1"
   distro:   &distro   "confluent"
+variables:
+  version:  &version  "6.1"
+  distro:   &distro   "confluent"
 machines:
   "0":
-    constraints: cores=2 mem=4G root-disk=20G
+    constraints: cores=2 mem=4G root-disk=20G tags=zookeeper
   "1":
-    constraints: cores=2 mem=4G root-disk=20G
+    constraints: cores=2 mem=4G root-disk=20G tags=zookeeper
   "2":
-    constraints: cores=2 mem=4G root-disk=20G
+    constraints: cores=2 mem=4G root-disk=20G tags=zookeeper
   "3":
-    constraints: cores=2 mem=4G root-disk=20G
+    constraints: cores=2 mem=4G root-disk=20G tags=broker
   "4":
-    constraints: cores=2 mem=4G root-disk=20G
+    constraints: cores=2 mem=4G root-disk=20G tags=broker
   "5":
-    constraints: cores=2 mem=4G root-disk=20G
+    constraints: cores=2 mem=4G root-disk=20G tags=broker
 applications:
+  easyrsa:
+    charm: cs:~containers/easyrsa
+    num_units: 1
+    to:
+    - lxd:0
   kafka-broker:
     charm: ../kafka-broker.charm
     num_units: 3
@@ -24,14 +32,18 @@ applications:
       group: test
       replication-factor: 3
       customize-failure-domain: False
-      generate-root-ca: True
-      internal-cluster-domain: maas
-      client-cluster-domain: maas
-      broker-cluster-domain: maas
-      keystore-path: /tmp/15fsnuw_ks.jks
-      truststore-path: /tmp/15fsnuw_ts.jks
-      keystore-zookeeper-path: /tmp/15fsnuw_zk_ks.jks
-      truststore-zookeeper-path: /tmp/15fsnuw_zk_ts.jks
+      generate-root-ca: False
+      service-restart-on-fail: True
+#      internal-cluster-domain: maas
+#      client-cluster-domain: maas
+#      broker-cluster-domain: maas
+      confluent_license_topic: ''
+      keystore-path: /var/ssl/private/kafka-ks.jks
+      truststore-path: /var/ssl/private/kafka-ts.jks
+      keystore-zookeeper-path: /var/ssl/private/zk-ks.jks
+      truststore-zookeeper-path: /var/ssl/private/zk-ts.jks
+      clientAuth: False
+#      log4j-root-logger: "DEBUG, stdout, kafkaAppender"
     to:
     - 3
     - 4
@@ -47,9 +59,11 @@ applications:
       quorum-keystore-path: /var/ssl/private/quorum-ks.jks
       quorum-truststore-path: /var/ssl/private/quorum-ts.jks
       keystore-path: /var/ssl/private/ssl-ks.jks
+      # Only charms related to this ZK will be able to connect
       truststore-path: /var/ssl/private/ssl-ts.jks
-      generate-root-ca: true
-      ssl_quorum: true
+      generate-root-ca: false
+      sslQuorum: false
+      log4j-root-logger: "DEBUG, stdout, zkAppender"
     to:
     - 0
     - 1
@@ -57,3 +71,7 @@ applications:
 relations:
 - - kafka-broker
   - zookeeper
+- - kafka-broker
+  - easyrsa
+- - zookeeper
+  - easyrsa

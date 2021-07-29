@@ -19,12 +19,15 @@ from ops.model import (
 from charmhelpers.core.templating import render
 
 from charmhelpers.core.host import (
-    service_running
+    service_running,
+    service_restart
 )
 
 from wand.apps.kafka import (
     KafkaJavaCharmBase,
-    KafkaCharmBaseMissingConfigError
+    KafkaCharmBaseMissingConfigError,
+    KafkaJavaCharmBasePrometheusMonitorNode,
+    KafkaJavaCharmBaseNRPEMonitoring
 )
 from cluster import KafkaBrokerCluster
 from wand.apps.relations.zookeeper import ZookeeperRequiresRelation
@@ -140,6 +143,35 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         self.mds = KafkaMDSProvidesRelation(self, 'mds')
         self.ks.set_default(config_state="{}")
 
+        # NRPE integration
+        self.nrpe = KafkaJavaCharmBaseNRPEMonitoring(
+            self,
+            svcs=["kafka"],
+            endpoints=["127.0.0.1:9000"],
+            nrpe_relation_name='nrpe-external-master')
+        self.framework.observe(self.nrpe.on.nrpe_available,
+                               self.nrpe.on_nrpe_available)
+
+        # Prometheus LMA integration
+        self.prometheus = \
+            KafkaJavaCharmBasePrometheusMonitorNode(
+                self, 'prometheus-manual',
+                port=self.config.get("jmx-exporter-port", 9404),
+                internal_endpoint=self.config.get(
+                    "jmx_exporter_use_internal", False),
+                labels=self.config.get("jmx_exporter_labels", None))
+        self.framework.observe(
+            self.on.prometheus_manual_relation_joined,
+            self.prometheus.on_prometheus_relation_joined)
+        self.framework.observe(
+            self.on.prometheus_manual_relation_changed,
+            self.prometheus.on_prometheus_relation_changed)
+
+    def is_jmxexporter_enabled(self):
+        if self.prometheus.relations:
+            return True
+        return False
+
     def on_upload_keytab_action(self, event):
         try:
             self._upload_keytab_base64(
@@ -185,16 +217,16 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         # TODO: Implement
         return
 
-    def on_update_status(self, event):
-        # Check if the locks must be handled or not
-        coordinator = OpsCoordinator()
-        coordinator.handle_locks(self.unit)
-        if not service_running(self.service):
-            self.model.unit.status = \
-                BlockedStatus("{} not running".format(self.service))
-            return
-        self.model.unit.status = \
-            ActiveStatus("{} is running".format(self.service))
+#    def on_update_status(self, event):
+#        # Check if the locks must be handled or not
+#        coordinator = OpsCoordinator()
+#        coordinator.handle_locks(self.unit)
+#        if not service_running(self.service):
+#            self.model.unit.status = \
+#                BlockedStatus("{} not running".format(self.service))
+#            return
+#        self.model.unit.status = \
+#            ActiveStatus("{} is running".format(self.service))
 
     def _on_cluster_relation_joined(self, event):
         if not self._cert_relation_set(event, self.cluster):
@@ -391,7 +423,7 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
             self._install_tarball()
         else:
             if self.distro == "confluent":
-                packages = CONFLUENT_PACKAGES
+                packages = CONFLUENT_PACKAGES + ['libsystemd-dev']
             else:
                 raise Exception("Not Implemented Yet")
             super().install_packages('openjdk-11-headless', packages)
@@ -690,6 +722,7 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
             listeners,
             self.get_ssl_keystore(),
             self.ks.ks_password,
+            self.config["oauth-public-key-path"],
             get_default=True,
             clientauth=self.config.get("clientAuth", False))
         if len(self.listener.get_sasl_mechanisms_list()) > 0:
@@ -843,10 +876,6 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
             client_props["sasl.jaas.config"] = \
                 sasl_config.format(self.keytab, self.kerberos_principal)
         if self.is_ssl_enabled():
-#            client_props["ssl.keystore.location"] = \
-#                self.config.get("keystore-path",
-#                                "/var/ssl/private/kafka_ks.jks")
-#            client_props["ssl.keystore.password"] = self.ks.ks_password
             if len(self.get_zk_truststore()) > 0:
                 client_props["ssl.truststore.location"] = \
                      self.get_zk_truststore()
@@ -922,10 +951,6 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
             return
         if not self._cert_relation_set(event):
             return
-#        # handle method must be called before any of the hooks
-#        # Running here ensures the handle() is always ran before the relevant
-#        # part for the lock management
-#        KafkaBrokerCoordinator().handle()
         if not self.zk.relation:
             # It does not make sense to progress until zookeeper is set
             self.model.unit.status = \
@@ -948,11 +973,9 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         except KafkaRelationBaseNotUsedError:
             self.model.unit.status = \
                 BlockedStatus("Relation not ready yet")
-#            event.defer()
             return
         except KafkaListenerRelationEmptyListenerDictError:
             logger.info("Listener info not published, deferring event")
-#            event.defer()
             return
         self.model.unit.status = \
             MaintenanceStatus("Render client properties")
@@ -963,6 +986,37 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
             target="/etc/systemd/system/"
                    "{}.service.d/override.conf".format(self.service))
         ctx["keytab_opts"] = self.keytab_b64
+
+        if self.unit.is_leader():
+            # Now, we need to always handle the locks, even if acquire() was
+            # not called since _check_if_ready_to_start returned False.
+            # Therefore, we need to manually handle those locks.
+            # If _check_if_ready_to_start returns True, then the locks will be
+            # managed at the restart event and config-changed is closed with a
+            # return.
+            coordinator = OpsCoordinator()
+            coordinator.resume()
+            coordinator.release()
+
+        # Check if the unit has never been restarted (inactive) or
+        # it is in failed status. In these cases, there is no reason to
+        # request for the a restart to the cluster, instead simply restart.
+        # For the "failed" case, check if service-restart-failed is set
+        # if so, restart it.
+        if not service_running(self.service) and \
+           self.config["service-restart-on-fail"]:
+            service_restart(self.service)
+            self.model.unit.status = \
+                ActiveStatus("Service is running")
+            return
+
+#        unit = SDUnit(b'{}.service'.format(self.service))
+#        unit.load()
+#        if unit.Unit.ActiveState == b'inactive' or \
+#           (self.config["service-restart-failed"] and
+#            unit.Unit.ActiveState == b'failed'):
+#            service_restart(self.service)
+#            return
 
         # Now, restart service
         self.model.unit.status = \
@@ -982,15 +1036,6 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
             self.model.unit.status = \
                 BlockedStatus("Service not running that "
                               "should be: {}".format(self.service))
-        # Now, we need to always handle the locks, even if acquire() was not
-        # called since _check_if_ready_to_start returned False.
-        # Therefore, we need to manually handle those locks.
-        # If _check_if_ready_to_start returns True, then the locks will be
-        # managed at the restart event and config-changed is closed with a
-        # return.
-        coordinator = OpsCoordinator()
-        coordinator.resume()
-        coordinator.release()
 
         # Apply sysctl
 

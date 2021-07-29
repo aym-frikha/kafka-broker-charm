@@ -23,6 +23,11 @@ options:
     type: int
     description: |
       The minimum amount of units to bootstrap the cluster
+  service-restart-on-fail:
+    default: False
+    type: boolean
+    description: |
+      Restart services rightaway once they are detected in failed state.
   super-users:
     default: ""
     type: string
@@ -103,6 +108,16 @@ options:
     description: |
       **Confluent Only** Enables Confluent RBAC feature. MDS relation must be set across the platform
       components in order for rbac to be set correctly.
+  oauth-public-key-path:
+    default: "/var/ssl/private/public.pem"
+    type: string
+    description: |
+      Path to the public key used to encrypt oauth tokens
+  oauth-private-key-path:
+    default: "/var/ssl/private/private.pem"
+    type: string
+    description: |
+      Path to the private key to encrypt oauth tokens
   oauth-token-verify:
     default: False
     type: boolean
@@ -319,6 +334,22 @@ options:
       Only the first folder will be taken into consideration. The <fs-type> is used by the charm
       if log-device is also set.
       The folders in this option will form the log.dirs
+  nagios_context:
+    default: "juju"
+    type: string
+    description: |
+      Used by the nrpe subordinate charms.
+      A string that will be prepended to instance name to set the host name
+      in nagios. So for instance the hostname would be something like:
+        juju-myservice-0
+      If you're running multiple environments with the same services in them
+      this allows you to differentiate between them.
+  nagios_servicegroups:
+    default: "confluent-kafka"
+    type: string
+    description: |
+      A comma-separated list of nagios servicegroups.
+      If left empty, the nagios_context will be used as the servicegroup
   server-properties:
     type: string
     description: |
@@ -338,4 +369,35 @@ options:
       zookeeper.connection.timeout.ms: 18000
       confluent.support.metrics.enable: true
       confluent.support.customer.id: anonymous
-
+  nagios_context:
+    default: "juju"
+    type: string
+    description: |
+      Used by the nrpe subordinate charms.
+  jmx_exporter_version: 
+    default: "v0.12.0"
+    type: string
+    description: |
+      Value set for the version of the JMX Exporter.
+  jmx_exporter_url:
+    default: "https://repo1.maven.org/maven2/io/prometheus/jmx/jmx_prometheus_javaagent/{}/jmx_prometheus_javaagent-{}.jar"
+    type: string
+    description: |
+      Maven's URL from where JMX jar can be downloaded.
+      Replace the version value with "{}" for the versions.
+  jmx-exporter-port: 
+    default: 9404
+    type: int
+    description: |
+      Port to be exposed by the exporter for prometheus.
+  jmx_exporter_labels: 
+    default: ""
+    type: string
+    description: |
+      Comma-separated list of key=value tags.
+  jmx_exporter_use_internal: 
+    default: false
+    type: boolean
+    description: |
+      Use the internal or advertised address in the prometheus relation.
+      If False, the advertised address will be used.
