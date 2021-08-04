@@ -84,6 +84,30 @@ To set Kerberos, there are two steps that needs to be taken into consideration. 
 
 Once the units are deployed, they will be blocked, waiting for the keytab file. That should be added per-unit, according to its hostname, using actions. Check the actions documentation for more details.
 
+### Sysctl tuning
+
+As proposed in [Ansible for Kafka Broker](https://github.com/confluentinc/cp-ansible/blob/8daf3140882ddbe84cecf0320c52592374a1a66e/roles/confluent.kafka_broker/defaults/main.yml#L51), there are some sysctl settings that are necessary for production-grade cluster.
+
+In the charmed version of Kafka stack, this can be achieved with sysconfig charm:
+
+```
+  sysconfig:
+    charm: cs:sysconfig
+    options:
+      sysctl: "{
+          vm.swappiness: 1,
+          vm.dirty_background_ratio: 5,
+          vm.dirty_ratio: 80,
+          vm.max_map_count: 262144
+        }"
+
+...
+
+relations:
+- - sysconfig
+  - kafka-broker:juju-info
+```
+
 ## Developing
 
 Create and activate a virtualenv with the development requirements:

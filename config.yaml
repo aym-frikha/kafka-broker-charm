@@ -220,14 +220,6 @@ options:
     type: string
     description: |
       Group set for kafka broker services
-  sysctl:
-    type: string
-    description: |
-      YAML formatted set of options to be used for sysctl
-    default: |
-      - vm.swappiness: 1
-      - vm.dirty_background_ratio: 5
-      - vm.dirty_ratio: 80
   listeners:
     type: string
     description: |

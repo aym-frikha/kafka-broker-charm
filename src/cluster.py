@@ -98,33 +98,6 @@ class KafkaBrokerCluster(KafkaRelationBase):
         # DEPRECATED METHOD
         return
 
-        listener_opts = {
-            "listeners": self.state.listeners,
-            "listener.security.protocol.map": self.state.listener_protocol_map,
-            "advertised.listeners": self.state.advertised_listeners,
-            "inter.broker.listener.name": "internal",
-        }
-        if self.is_TLS_enabled():
-            ssl_opts = {}
-            for lst in self.state.listeners.split(","):
-                name = "listener.name." + lst.split("://")[0]
-                _opts = {}
-                _opts[name + ".ssl.truststore.location"] = \
-                    self.state.ts_path
-                _opts[name + ".ssl.truststore.password"] = \
-                    self.state.ts_pwd
-                _opts[name + ".ssl.truststore.type"] = "JKS"
-                _opts[name + ".ssl.keystore.location"] = \
-                    keystore_path
-                _opts[name + ".ssl.keystore.password"] = \
-                    keystore_pwd
-                _opts[name + ".ssl.keystore.type"] = keystore_type
-                _opts[name + ".ssl.client.auth"] = \
-                    "required" if clientauth else "none"
-                ssl_opts = {**_opts, **ssl_opts}
-            listener_opts = {**ssl_opts, **listener_opts}
-        return listener_opts
-
     @property
     def is_single(self):
         return len(self.relation) == 1

@@ -5,18 +5,28 @@ import os
 import unittest
 from mock import patch
 from mock import PropertyMock
+import base64
 
 from ops.testing import Harness
 import charm as charm
 import cluster as cluster
 import charmhelpers.fetch.ubuntu as ubuntu
 
+import wand.contrib.java as java
+from nrpe.client import NRPEClient
+
+import wand.apps.relations.kafka_relation_base as kafka_relation_base
+
 from unit_tests.config_files import SERVER_PROPS
 
-from wand.contrib.linux import getCurrentUserAndGroup
-import wand.apps.relations.zookeeper as zkRelation
-import wand.apps.kafka as kafkaapp
+import wand.apps.kafka as kafka
 import wand.security as security
+
+from wand.apps.relations.tls_certificates import (
+    TLSCertificateRequiresRelation,
+)
+
+import wand.apps.relations.kafka_listener as kafka_listener
 
 TO_PATCH_LINUX = [
     "userAdd",
@@ -32,8 +42,7 @@ TO_PATCH_FETCH = [
 TO_PATCH_HOST = [
     'service_resume',
     'service_running',
-    'service_restart',
-    'service_reload'
+    'service_restart'
 ]
 
 
@@ -67,6 +76,17 @@ class MockRelations(object):
         return list(self._data.keys())
 
 
+class MockOpsCoordinator(object):
+    def __init__(self):
+        super().__init__()
+
+    def resume(self):
+        return
+
+    def release(self):
+        return
+
+
 class TestCharm(unittest.TestCase):
     maxDiff = None  # print the entire diff on assert commands
 
@@ -86,137 +106,211 @@ class TestCharm(unittest.TestCase):
     def setUp(self):
         super(TestCharm, self).setUp()
         for p in TO_PATCH_LINUX:
-            self._patch(kafkaapp, p)
+            self._patch(kafka, p)
         for p in TO_PATCH_FETCH:
             self._patch(ubuntu, p)
         for p in TO_PATCH_HOST:
             self._patch(charm, p)
 
-    @patch.object(zkRelation.ZookeeperRequiresRelation, "relations",
-                  new_callable=PropertyMock)
-    @patch.object(cluster.KafkaBrokerCluster, "relations",
-                  new_callable=PropertyMock)
-    # For _on_install
-    @patch.object(charm.KafkaBrokerCharm, "create_log_dir")
-    @patch.object(kafkaapp.KafkaJavaCharmBase, "install_packages")
-    # For _on_config_changed
-    @patch.object(charm.KafkaBrokerCharm, "render_service_override_file")
-    @patch.object(cluster.KafkaBrokerCluster, "unit",
-                  new_callable=PropertyMock)
-    @patch.object(cluster.KafkaBrokerCluster, "relation",
-                  new_callable=PropertyMock)
-    @patch.object(zkRelation.ZookeeperRequiresRelation, "unit",
-                  new_callable=PropertyMock)
-    @patch.object(zkRelation.ZookeeperRequiresRelation, "relation",
-                  new_callable=PropertyMock)
-    @patch.object(cluster.KafkaBrokerCluster, "num_azs",
-                  new_callable=PropertyMock)
-    @patch.object(cluster.KafkaBrokerCluster, "num_peers",
-                  new_callable=PropertyMock)
-    @patch.object(charm.KafkaBrokerCharm,
-                  'is_client_ssl_enabled')
+    @patch.object(charm, "OpsCoordinator")
+    @patch.object(kafka_listener.KafkaListenerProvidesRelation,
+                  'advertise_addr', new_callabl=PropertyMock)
+    @patch.object(cluster.KafkaBrokerCluster,
+                  'advertise_addr', new_callable=PropertyMock)
+    @patch.object(kafka_listener.KafkaListenerProvidesRelation,
+                  'binding_addr', new_callabl=PropertyMock)
+    @patch.object(cluster.KafkaBrokerCluster,
+                  'binding_addr', new_callable=PropertyMock)
+    @patch.object(kafka_listener, 'get_hostname')
+    @patch.object(cluster, 'get_hostname')
+    @patch.object(kafka_relation_base, 'CreateTruststore')
+    @patch.object(charm, 'CreateTruststore')
+    @patch.object(charm, 'close_port')
+    @patch.object(charm, 'open_port')
+    @patch.object(charm.KafkaBrokerCharm, '_check_if_ready_to_start')
+    @patch.object(charm, 'service_resume')
+    @patch.object(charm, 'service_restart')
+    @patch.object(charm, 'service_running')
+    @patch.object(charm.KafkaBrokerCharm, '_generate_keystores')
+    @patch.object(charm.KafkaBrokerCharm, '_cert_relation_set')
+    @patch.object(kafka, "open_port")
+    @patch.object(NRPEClient, "add_check")
+    @patch.object(kafka.KafkaJavaCharmBasePrometheusMonitorNode,
+                  'advertise_addr', new_callable=PropertyMock)
+    @patch.object(kafka.KafkaJavaCharmBasePrometheusMonitorNode,
+                  'scrape_request', new_callable=PropertyMock)
+    @patch.object(java, "genRandomPassword")
+    @patch.object(charm, "genRandomPassword")
+    # Those two patches set _cert_relation_set + get_ssl* as empty
+    @patch.object(TLSCertificateRequiresRelation, "get_server_certs")
+    @patch.object(TLSCertificateRequiresRelation, "request_server_cert")
+    @patch.object(charm, "PKCS12CreateKeystore")
+    @patch.object(charm.KafkaBrokerCharm, "create_data_and_log_dirs")
+    @patch.object(kafka.KafkaJavaCharmBase, "install_packages")
+    @patch.object(charm.KafkaBrokerCharm, "set_folders_and_permissions")
+    @patch.object(kafka.KafkaJavaCharmBase, "create_log_dir")
+    @patch.object(kafka, "render")
     @patch.object(charm, "render")
-    def test_confluent_config_changed_call(self, mock_render,
-                                           mock_is_client_ssl,
-                                           mock_num_peers,
-                                           mock_num_azs,
-                                           mock_zk_rel_data,
-                                           mock_zk_unit,
-                                           mock_cluster_data,
-                                           mock_cluster_unit,
-                                           mock_render_svc,
-                                           mock_inst_packages,
-                                           mock_create_log_dir,
-                                           mock_cluster_relations,
-                                           mock_zk_relations):
+    def test_config_changed(self,
+                            mock_render,
+                            mock_kafka_class_render,
+                            mock_create_log_dir,
+                            mock_folders_perms,
+                            mock_on_install_pkgs,
+                            mock_create_dirs,
+                            mock_create_jks,
+                            mock_request_server_cert,
+                            mock_get_server_certs,
+                            mock_gen_random_pwd,
+                            mock_java_gen_random_pwd,
+                            mock_prometheus_scrape_req,
+                            mock_prometheus_advertise_addr,
+                            mock_nrpe_add_check,
+                            mock_kafka_open_port,
+                            mock_cert_relation_set,
+                            mock_generate_keystores,
+                            mock_service_running,
+                            mock_svc_restart,
+                            mock_svc_resume,
+                            mock_check_if_ready_restart,
+                            mock_open_port,
+                            mock_close_port,
+                            mock_create_ts,
+                            mock_rel_base_create_ts,
+                            mock_get_hostname,
+                            mock_list_get_hostname,
+                            mock_cluster_binding_addr,
+                            mock_list_binding_addr,
+                            mock_cluster_advertise_addr,
+                            mock_list_advertise_addr,
+                            mock_ops_coordinator):
+        """Test configuration changed with a cluster + 1x unit ZK.
+
+        Use certificates passed via options and this is leader unit.
+
+        Check each of the properties generated using mock_render.
+        """
+        # Avoid triggering the RestartEvent
+        mock_service_running.return_value = False
+        mock_check_if_ready_restart.return_value = False
+        mock_get_hostname.return_value = \
+            "vm.maas"
+        mock_list_get_hostname.return_value = \
+            "vm.maas"
+        # Ensure addresses are set
+        mock_cluster_binding_addr.return_value = "192.168.200.200"
+        mock_list_binding_addr.return_value = "192.168.200.200"
+        mock_cluster_advertise_addr.return_value = "192.168.200.200"
+        mock_list_advertise_addr.return_value = "192.168.200.200"
+        # Remove the random password generation
+        mock_gen_random_pwd.return_value = "confluentkeystorepass"
+        mock_java_gen_random_pwd.return_value = "confluentkeystorepass"
+        # Mock the OpsCoordinator
+        mock_ops_coordinator.return_value = MockOpsCoordinator()
+        # Prepare cleanup
+
         def __cleanup():
-            for i in ["/tmp/vmdisovs1_testcert.crt",
-                      "/tmp/vmdisovs1_testcert.key",
-                      "/tmp/15fsnuw_ks.jks",
-                      "/tmp/15fsnuw_ts.jks",
-                      "/tmp/15fsnuw_zk_ks.jks",
-                      "/tmp/15fsnuw_zk_ts.jks"]:
+            for i in ["/tmp/testcert*", "/tmp/test-ts-quorum.jks"]:
                 try:
                     os.remove(i)
-                except:  # noqa
+                except: # noqa
                     pass
 
         __cleanup()
-#        mock_listeners.return_value = {}
-        mock_num_peers.return_value = 3
-        mock_num_azs.return_value = 3
-        mock_render.return_value = ""
-        mock_is_client_ssl.return_value = False
-        crt, key = security.generateSelfSigned("/tmp", "vmdisovs1_testcert")
-        user, group = getCurrentUserAndGroup()
+        certs = {}
+        crt, key = security.generateSelfSigned("/tmp", "testcert")
+        for i in range(1, 4):
+            certs[i] = {}
+            certs[i]["crt"] = crt
+            certs[i]["key"] = key
+        __cleanup()  # cleaning up the intermediate certs
+
+        # Mock-up values
+        mock_cert_relation_set.return_value = True
+        # Prepare test
         harness = Harness(charm.KafkaBrokerCharm)
-        self.addCleanup(harness.cleanup)
-        harness.begin()
-        os.environ["JUJU_AVAILABILITY_ZONE"] = "test"
-        # _update_config: do not run a config-changed hook
-        harness._update_config({
-            "user": user,
-            "group": group,
+        harness.update_config({
+            "version": "6.1",
+            "distro": "confluent",
+            "user": "test",
+            "group": "test",
+            "keystore-zookeeper-path": "/var/ssl/private/zk-ks.jks",
+            "truststore-zookeeper-path": "/var/ssl/private/zk-ts.jks",
+            "truststore-path": "/var/ssl/private/ssl-ts.jks",
+            "keystore-path": "/var/ssl/private/ssl-ks.jks",
+            "ssl_cert": base64.b64encode(crt.encode("ascii")),
+            "ssl_key": base64.b64encode(key.encode("ascii")),
+            "ssl-zk-cert": base64.b64encode(crt.encode("ascii")),
+            "ssl-zk-key": base64.b64encode(key.encode("ascii")),
             "replication-factor": 3,
-            "customize-failure-domain": True,
-            "generate-root-ca": True,
-            "internal-cluster-domain": "maas",
-            "client-cluster-domain": "maas",
-            "broker-cluster-domain": "maas",
-            "keystore-path": "/tmp/15fsnuw_ks.jks",
-            "truststore-path": "/tmp/15fsnuw_ts.jks",
-            "keystore-zookeeper-path": "/tmp/15fsnuw_zk_ks.jks",
-            "truststore-zookeeper-path": "/tmp/15fsnuw_zk_ts.jks",
+            "customize-failure-domain": False,
+            "generate-root-ca": False,
+            "service-restart-on-fail": True,
+            "generate-root-ca": False,
+            "log4j-root-logger": "DEBUG, stdout, kafkaAppender"
         })
-        mock_zk_rel_data.return_value = MockRelations(data={
-            "this": {},
-            "zookeeper/0":
-                {"mtls_cert": crt, "endpoint": "zookeeper.maas:2182"}
+        harness.set_leader(True)
+        # Complete the cluster
+        cluster_id = harness.add_relation("cluster", "kafka-broker")
+        harness.add_relation_unit(cluster_id, "kafka-broker/1")
+        harness.update_relation_data(cluster_id, "kafka-broker/1", {
+            "cert": certs[1]["crt"]
         })
-        mock_zk_relations.return_value = \
-            mock_zk_rel_data.return_value.relations
-        mock_zk_unit.return_value = "this"
-        mock_cluster_data.return_value = MockRelations(data={
-            "this": {},
-            "otherunit1": {"az": "2", "tls_cert": crt}
+        harness.add_relation_unit(cluster_id, "kafka-broker/2")
+        harness.update_relation_data(cluster_id, "kafka-broker/2", {
+            "cert": certs[2]["crt"]
         })
-        mock_cluster_relations.return_value = \
-            mock_cluster_data.return_value.relations
-        mock_cluster_unit.return_value = "this"
+        # Zookeeper relation
+        zk_id = harness.add_relation("zookeeper", "zookeeper")
+        harness.add_relation_unit(zk_id, "zookeeper/0")
+        harness.update_relation_data(zk_id, "zookeeper/0", {
+            "cert": certs[3]["crt"],
+            "endpoint": "zookeeper.maas:2182"
+        })
+        harness.begin_with_initial_hooks()
+        self.addCleanup(harness.cleanup)
         kafka = harness.charm
-        harness.add_relation("zookeeper", "zookeeper/0")
-        kafka._on_install(
-            MockEvent(relations=mock_cluster_data.return_value))
-        kafka.cluster.on_cluster_relation_joined(
-            MockEvent(relations=mock_cluster_data.return_value))
-        # Passing the same relation mock as defined above
-        kafka._on_zookeeper_relation_changed(
-            MockEvent(mock_zk_rel_data.return_value))
-        kafka._on_config_changed(
-            MockEvent(mock_zk_rel_data.return_value))
-        __cleanup()
-        mock_render.assert_called()
-        # There are 5x calls to render: (1) tls-client-properties,
-        # (2) server.props (for _on_install)
-        # (3) client.props and then (4) tls-client.props (config-changed)
-        # (5) server.props (on_config_changed)
-        # (6) client.props rendering
-        # Interested on the output of the 5th call
-        server_props = mock_render.call_args_list[4].kwargs["context"]
-        print(server_props)
-        # clean up values that are randomly generated or depend on the machine:
-        server_props["server_props"]["listeners"] = "internal://vm.maas:9092,broker://vm.maas:9093,client://vm.maas:9094" # noqa
-        server_props["server_props"]["advertised.listeners"] = "internal://vm.maas:9092,broker://vm.maas:9093,client://vm.maas:9094" # noqa
-        server_props["server_props"]["listener.name.client.ssl.truststore.password"] = "confluenttruststorepass" # noqa
-        server_props["server_props"]["listener.name.client.ssl.keystore.password"] = "confluentkeystorepass" # noqa
-        server_props["server_props"]["listener.name.internal.ssl.truststore.password"] = "confluenttruststorepass" # noqa
-        server_props["server_props"]["listener.name.internal.ssl.keystore.password"] = "confluentkeystorepass" # noqa
-        server_props["server_props"]["listener.name.broker.ssl.truststore.password"] = "confluenttruststorepass" # noqa
-        server_props["server_props"]["listener.name.broker.ssl.keystore.password"] = "confluentkeystorepass" # noqa
-        server_props["server_props"]["zookeeper.ssl.keystore.password"] = "confluentkeystorepass" # noqa
-        server_props["server_props"]["zookeeper.ssl.truststore.password"] = "confluenttruststorepass" # noqa
-        simulate_render = self._simulate_render(
-            ctx=server_props,
-            templ_file='server.properties.j2')
-        print(simulate_render)
-        self.assertEqual(SERVER_PROPS, simulate_render)
+        # If cluster relation events (-joined, -changed) happens before
+        # certificate events, then cluster-* will be deferred.
+        # Run reemit to ensure they are run.
+        kafka.framework.reemit()
+        args, kwargs = mock_render.call_args_list[-2]
+        # Check server.properties rendering
+        server_properties = SERVER_PROPS.split("\n")
+        server_properties.sort()
+        render_server_props = self._simulate_render(
+            kwargs["context"], templ_file="server.properties.j2").split("\n")
+        render_server_props.sort()
+        self.assertEqual(server_properties, render_server_props)
+        # Assert client.properties was correctly rendered
+        mock_render.assert_any_call(
+            source='client.properties.j2',
+            target='/etc/kafka/client.properties',
+            owner='test', group='test', perms=0o640,
+            context={
+                'client_props': {
+                    'default.api.timeout.ms': 20000,
+                    'request.timeout.ms': 20000,
+                    'ssl.truststore.location': '/var/ssl/private/ssl-ts.jks',
+                    'ssl.truststore.password': 'confluentkeystorepass'}}
+        )
+        # keystore is set, assert generate_keystores was called
+        mock_generate_keystores.assert_called()
+        # Zookeeper TLS properties
+        mock_render.assert_any_call(
+            source='zookeeper-tls-client.properties.j2',
+            target='/etc/kafka/zookeeper-tls-client.properties',
+            owner='test', group='test', perms=0o640,
+            context={'client_props': {
+                'zookeeper.clientCnxnSocket': 'org.apache.zookeeper.'
+                                              'ClientCnxnSocketNetty',
+                'zookeeper.ssl.client.enable': 'true',
+                'zookeeper.ssl.keystore.location':
+                '/var/ssl/private/zk-ks.jks',
+                'zookeeper.ssl.keystore.password': 'confluentkeystorepass',
+                'zookeeper.ssl.truststore.location':
+                '/var/ssl/private/zk-ts.jks',
+                'zookeeper.ssl.truststore.password': 'confluentkeystorepass'}}
+        )
+        print(mock_render.call_args_list)
+        return
