@@ -151,7 +151,7 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         self.mds = KafkaMDSProvidesRelation(self, 'mds')
         self.ks.set_default(config_state="{}")
         self.ks.set_default(need_restart=False)
-        self.ks.set_default(port=0)
+        self.ks.set_default(ports=[])
         # LMA integrations
         self.prometheus = \
             KafkaJavaCharmBasePrometheusMonitorNode(
@@ -250,7 +250,19 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         self._on_config_changed(event)
 
     def on_listeners_relation_changed(self, event):
-        self.listener.on_listener_relation_changed(event)
+        try:
+            self.listener.on_listener_relation_changed(event)
+        except KafkaRelationBaseTLSNotSetError:
+            logger.warning(
+                "Detected some of the remote apps on listener relation "
+                "but still waiting for setup on this unit.")
+            # We need certs correctly configured to be able to set listeners
+            # because certs are configured on other peers.
+            # Defer this event until operator updates certificate info.
+            self.model.unit.status = BlockedStatus(
+                "Missing certificate info: listeners")
+            event.defer()
+            return
         self._on_config_changed(event)
 
     def on_mds_relation_joined(self, event):
@@ -514,7 +526,8 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
                 self.certificates.get_chain()
             logger.debug("SSL Certificate chain"
                          " from tls-certificates: {}".format(c))
-        except TLSCertificateDataNotFoundInRelationError:
+        except (TLSCertificateDataNotFoundInRelationError,
+                TLSCertificateRelationNotPresentError):
             # Certificates not ready yet, return empty
             return ""
         return c
@@ -528,7 +541,8 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         try:
             certs = self.certificates.get_server_certs()
             k = certs[self.listener.binding_addr]["key"]
-        except TLSCertificateDataNotFoundInRelationError:
+        except (TLSCertificateDataNotFoundInRelationError,
+                TLSCertificateRelationNotPresentError):
             # Certificates not ready yet, return empty
             return ""
         return k
@@ -562,7 +576,8 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
                 self.certificates.get_chain()
             logger.debug("SSL Certificate chain"
                          " from tls-certificates: {}".format(c))
-        except TLSCertificateDataNotFoundInRelationError:
+        except (TLSCertificateDataNotFoundInRelationError,
+                TLSCertificateRelationNotPresentError):
             # Certificates not ready yet, return empty
             return ""
         return c
@@ -577,7 +592,8 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         try:
             certs = self.certificates.get_server_certs()
             k = certs[self.zk.binding_addr]["key"]
-        except TLSCertificateDataNotFoundInRelationError:
+        except (TLSCertificateDataNotFoundInRelationError,
+                TLSCertificateRelationNotPresentError):
             # Certificates not ready yet, return empty
             return ""
         return k
@@ -1013,7 +1029,10 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         2) Generate the Keystores
         3) Manage AZs
         4) Generate the config files
+        5) Restart strategy
+        6) Open ports
         """
+        print(event)
         # START CONFIG FILE UPDATES
         ctx = {}
 
@@ -1117,11 +1136,14 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
                               "should be: {}".format(self.services))
 
         # 6) Open ports
-        if self.ks.port != self.config.get("clientPort", 3888):
-            if self.ks.port > 0:
-                close_port(self.ks.port)
-            open_port(self.config.get("clientPort", 3888))
-            self.ks.port = self.config.get("clientPort", 3888)
+        # 6.1) Close original ports
+        for p in self.ks.ports:
+            close_port(p)
+        # 6.2) Open ports for the newly found listeners
+        for p in self.listener.get_ports():
+            open_port(p)
+        # 6.3) Update the ports list
+        self.ks.ports = self.listener.get_ports()
 
 
 if __name__ == "__main__":

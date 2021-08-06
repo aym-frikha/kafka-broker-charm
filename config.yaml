@@ -367,7 +367,7 @@ options:
     description: |
       Used by the nrpe subordinate charms.
   jmx_exporter_version: 
-    default: "v0.12.0"
+    default: "0.12.0"
     type: string
     description: |
       Value set for the version of the JMX Exporter.
