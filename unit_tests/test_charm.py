@@ -252,11 +252,13 @@ class TestCharm(unittest.TestCase):
         cluster_id = harness.add_relation("cluster", "kafka-broker")
         harness.add_relation_unit(cluster_id, "kafka-broker/1")
         harness.update_relation_data(cluster_id, "kafka-broker/1", {
-            "cert": certs[1]["crt"]
+            "cert": certs[1]["crt"],
+            "prometheus-manual_endpoint": "192.168.100.101"
         })
         harness.add_relation_unit(cluster_id, "kafka-broker/2")
         harness.update_relation_data(cluster_id, "kafka-broker/2", {
-            "cert": certs[2]["crt"]
+            "cert": certs[2]["crt"],
+            "prometheus-manual_endpoint": "192.168.100.102"
         })
         # Zookeeper relation
         zk_id = harness.add_relation("zookeeper", "zookeeper")

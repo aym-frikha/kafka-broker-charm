@@ -160,12 +160,6 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
                 internal_endpoint=self.config.get(
                     "jmx_exporter_use_internal", False),
                 labels=self.config.get("jmx_exporter_labels", None))
-        self.framework.observe(
-            self.on.prometheus_manual_relation_joined,
-            self.prometheus.on_prometheus_relation_joined)
-        self.framework.observe(
-            self.on.prometheus_manual_relation_changed,
-            self.prometheus.on_prometheus_relation_changed)
         self.nrpe = KafkaJavaCharmBaseNRPEMonitoring(
             self,
             svcs=[self._get_service_name()],
@@ -306,6 +300,10 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
             event.defer()
             self.model.unit.status = BlockedStatus(str(e))
         self._on_config_changed(event)
+        if not self.prometheus.relations:
+            return
+        if len(self.prometheus.relations) > 0:
+            self.prometheus.on_prometheus_relation_changed(event)
 
     def _on_zookeeper_relation_joined(self, event):
         self.zk.user = self.config.get("user", "")
@@ -614,8 +612,10 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         server_props = \
             yaml.safe_load(self.config.get("server-properties", "")) or {}
         # https://docs.confluent.io/platform/current/installation/license.html
-        if self.get_license_topic() and len(self.get_license_topic()) > 0:
-            server_props["confluent.license.topic"] = self.get_license_topic()
+        if self.get_license_topic() and \
+           len(self.get_license_topic()) > 0 and \
+           self.distro == "confluent":
+            server_props["confluent.license"] = self.get_license_topic()
         server_props["log.dirs"] = \
             list(yaml.safe_load(
                      self.config.get("data-log-dir", "")).items())[0][1]

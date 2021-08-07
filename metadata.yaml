@@ -31,5 +31,3 @@ resources:
     filename: archive.tar.gz
     description: |
       Tarball file used to install kafka instead of packages
-    
-
