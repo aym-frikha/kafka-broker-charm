@@ -191,6 +191,7 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         event.set_results({"keytab": "Uploaded!"})
 
     def on_restart_event(self, event):
+        logger.debug("EVENT DEBUG: on_restart_event called")
         if not self.ks.need_restart:
             # There is a chance of several restart events being stacked.
             # This check ensures a single restart happens if several
@@ -205,6 +206,8 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
             # requests for this unit anymore).
             # We can drop any other restart events that were stacked and
             # waiting for processing.
+            logger.debug("EVENT DEBUG: restart event abandoned,"
+                         " need_restart is unset")
             return
         if event.restart():
             # Restart was successful, if the charm is keeping track
@@ -212,11 +215,13 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
             self.ks.config_state = event.ctx
             # Toggle need_restart as we just did it.
             self.ks.need_restart = False
+            logger.debug("EVENT DEBUG: restart event.restart() successful")
             self.model.unit.status = \
                 ActiveStatus("service running")
         else:
             # defer the RestartEvent as it is still waiting for the
             # lock to be released.
+            logger.debug("EVENT DEBUG: restart event.restart() failed, defer")
             event.defer()
 
     def on_certificates_relation_joined(self, event):
@@ -331,6 +336,15 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         except KafkaRelationBaseTLSNotSetError as e:
             event.defer()
             self.model.unit.status = BlockedStatus(str(e))
+        # For some reason, after configurations are ready, kafka restarts
+        # before zookeeper is ready. That means the last restart events are
+        # lost. Therefore, check here if kafka service is running.
+        # If not running before config change, it is worthy to restart it.
+        # Not putting this logic into update_status because this is
+        # kafka <> zookeeper specific.
+        if service_running(self.service):
+            service_reload(self.service)
+            service_restart(self.service)
         self._on_config_changed(event)
 
     def _cert_relation_set(self, event, rel=None):
@@ -1032,7 +1046,8 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         5) Restart strategy
         6) Open ports
         """
-        print(event)
+        logger.debug("EVENT DEBUG: _on_config_changed called"
+                     " for event: {}".format(event))
         # START CONFIG FILE UPDATES
         ctx = {}
 

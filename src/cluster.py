@@ -88,7 +88,7 @@ class KafkaBrokerCluster(KafkaRelationBase):
             self.relation.data[self.model.app]["listeners"] = listeners
 
     def get_listener_template(self):
-        return self.relation.data[self.model.app].get("listeners", "")
+        return self.relation.data[self.model.app].get("listeners", "{}")
 
     def listener_opts(self,
                       keystore_path,
