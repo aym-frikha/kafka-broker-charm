@@ -23,17 +23,22 @@ options:
     type: int
     description: |
       The minimum amount of units to bootstrap the cluster
-  service-restart-on-fail:
-    default: False
-    type: boolean
-    description: |
-      Restart services rightaway once they are detected in failed state.
   super-users:
     default: ""
     type: string
     description: |
       List of users to be added as super users with full admin permissions, example: User:mds;User:HTTP
       In case SASL is enabled, this list MUST CONTAIN all brokers' principals.
+  mds_user:
+    default: ""
+    type: string
+    description: |
+      Super user to be set in the MDS relation
+  mds_password:
+    default: ""
+    type: string
+    description: |
+      Super user password.
   install-method:
     default: 'package'
     type: string

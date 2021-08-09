@@ -16,8 +16,6 @@ from ops.model import (
     BlockedStatus
 )
 
-from ops.charm import InstallEvent
-
 from charmhelpers.core.templating import render
 
 from charmhelpers.core.host import (
@@ -165,6 +163,14 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
             svcs=[self._get_service_name()],
             endpoints=[],
             nrpe_relation_name='nrpe-external-master')
+        # Now, we need to always handle the locks
+        # This method is always called, therefore should be used to
+        # always manage the locks.
+        self.coordinator = OpsCoordinator()
+        self.coordinator.resume()
+
+    def __del__(self):
+        self.coordinator.release()
 
     def is_jmxexporter_enabled(self):
         if self.prometheus.relations:
@@ -274,8 +280,8 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
 
     def on_update_status(self, event):
         # Check if the locks must be handled or not
-        coordinator = OpsCoordinator()
-        coordinator.handle_locks(self.unit)
+        # coordinator = OpsCoordinator()
+        # coordinator.handle_locks(self.unit)
         super().on_update_status(event)
 
     def _on_cluster_relation_joined(self, event):
@@ -336,15 +342,21 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         except KafkaRelationBaseTLSNotSetError as e:
             event.defer()
             self.model.unit.status = BlockedStatus(str(e))
-        # For some reason, after configurations are ready, kafka restarts
-        # before zookeeper is ready. That means the last restart events are
-        # lost. Therefore, check here if kafka service is running.
-        # If not running before config change, it is worthy to restart it.
-        # Not putting this logic into update_status because this is
-        # kafka <> zookeeper specific.
-        if service_running(self.service):
-            service_reload(self.service)
+        # A Zookeeper change should always trigger a restart.
+        if not service_running(self.service):
+            # For some reason, after configurations are ready, kafka restarts
+            # before zookeeper is ready. That means the last restart events
+            # are lost. Therefore, check here if kafka service is running.
+            # If not running before config change, it is worthy to restart it.
+            # Not putting this logic into update_status because this is
+            # kafka <> zookeeper specific.
+            service_resume(self.service)
             service_restart(self.service)
+        else:
+            # Otherwise, charm is running then issue a restart event.
+            self.ks.need_restart = True
+            # Issue a restart event with current context.
+            self.on.restart_event.emit(self.ctx, services=self.services)
         self._on_config_changed(event)
 
     def _cert_relation_set(self, event, rel=None):
@@ -751,6 +763,64 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
                                      group=self.config["group"],
                                      mode=0o640)
 
+        # Metadata service relation
+        if self.mds.relations and self.distro != "confluent":
+            raise KafkaBrokerCharmMDSNotSupportedError(self.distro)
+        if self.mds.relations:
+            # MDS will use the same set of certificates for listeners
+            protocol = "https" if len(self.get_ssl_key()) > 0 else "http"
+            server_props["confluent.metadata.server.advertised.listeners"] = \
+                "{}://{}:8090".format(protocol, self.listener.hostname)
+            server_props["confluent.metadata."
+                         "server.authentication.method"] = "BEARER"
+            server_props["confluent.metadata.server.listeners"] = \
+                "{}://{}:8090".format(protocol, self.listener.hostname)
+
+            # In case LDAP is configured, MDS endpoints need to be shared.
+            # Publish the endpoints to the cluster units:
+            cluster_data = self.cluster.relation.data
+            cluster_data[self.unit]["mds_url"] = \
+                server_props["confluent.metadata.server.advertised.listeners"]
+            # Now read each of the units' in the cluster relation
+            # Inform listener requirers of MDS endpoint
+            self.listeners.set_mds_endpoint(
+                ",".join(
+                    [cluster_data[u]["mds_url"]
+                     for u in self.cluster.relation.units]),
+                self.config["mds_user"], self.config["mds_password"]
+            )
+            # Finish MDS configuration
+            if len(self.get_ssl_keystore()) > 0:
+                server_props["confluent.metadata."
+                             "server.ssl.key.password"] = self.ks.ks_password
+                server_props["confluent.metadata."
+                             "server.ssl.keystore.location"] = \
+                    self.get_ssl_keystore()
+                server_props["confluent.metadata."
+                             "server.ssl.keystore.password"] = \
+                    self.ks.ks_password
+                server_props["confluent.metadata."
+                             "server.ssl.truststore.location"] = \
+                    self.get_ssl_truststore()
+                server_props["confluent.metadata."
+                             "server.ssl.truststore.password"] = \
+                    self.ks.ts_password
+            if self.config["oauth-token-verify"]:
+                server_props["confluent.metadata.server.token.auth.enable"] = \
+                    self.config["oauth-token-verify"]
+                server_props["confluent.metadata.server.public.key.path"] = \
+                    self.get_oauth_token_cert()
+                server_props["confluent.metadata.server.token.key.path"] = \
+                    self.get_oauth_token_key()
+                server_props["confluent.metadata."
+                             "server.token.max.lifetime.ms"] = \
+                    "3600000"
+                server_props["confluent.metadata."
+                             "server.token.signature.algorithm"] = "RS256"
+                server_props["confluent.metadata."
+                             "topic.replication.factor"] = "3"
+
+        # Listener logic
         listeners = {}
         listener_opts = {}
         if self.unit.is_leader():
@@ -811,6 +881,16 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
             self.config["oauth-public-key-path"],
             get_default=True,
             clientauth=self.config.get("clientAuth", False))
+
+        # Open listner ports:
+        # for p in self.ks.ports:
+        #     close_port(p)
+        prts = []
+        for k, v in json.loads(listeners).items():
+            open_port(v["port"])
+            prts.append(v["port"])
+        self.ks.ports = prts
+
         if len(self.listener.get_sasl_mechanisms_list()) > 0:
             server_props["sasl.enabled.mechanisms"] = ",".join(
                 self.listener.get_sasl_mechanism_list())
@@ -824,48 +904,6 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         self.listener.set_bootstrap_data(listeners)
         logger.debug("Found listeners: {}".format(listeners))
         server_props = {**server_props, **listener_opts}
-
-        # Metadata service relation
-        if self.mds.relations and self.distro != "confluent":
-            raise KafkaBrokerCharmMDSNotSupportedError(self.distro)
-        if self.mds.relations:
-            # MDS will use the same set of certificates for listeners
-            protocol = "https" if len(self.get_ssl_key()) > 0 else "http"
-            server_props["confluent.metadata.server.advertised.listeners"] = \
-                "{}://{}:8090".format(protocol, self.listener.hostname)
-            server_props["confluent.metadata."
-                         "server.authentication.method"] = "BEARER"
-            server_props["confluent.metadata.server.listeners"] = \
-                "{}://{}:8090".format(protocol, self.listener.hostname)
-            if len(self.get_ssl_keystore()) > 0:
-                server_props["confluent.metadata."
-                             "server.ssl.key.password"] = self.ks.ks_password
-                server_props["confluent.metadata."
-                             "server.ssl.keystore.location"] = \
-                    self.get_ssl_keystore()
-                server_props["confluent.metadata."
-                             "server.ssl.keystore.password"] = \
-                    self.ks.ks_password
-                server_props["confluent.metadata."
-                             "server.ssl.truststore.location"] = \
-                    self.get_ssl_truststore()
-                server_props["confluent.metadata."
-                             "server.ssl.truststore.password"] = \
-                    self.ks.ts_password
-            if self.config["oauth-token-verify"]:
-                server_props["confluent.metadata.server.token.auth.enable"] = \
-                    self.config["oauth-token-verify"]
-                server_props["confluent.metadata.server.public.key.path"] = \
-                    self.get_oauth_token_cert()
-                server_props["confluent.metadata.server.token.key.path"] = \
-                    self.get_oauth_token_key()
-                server_props["confluent.metadata."
-                             "server.token.max.lifetime.ms"] = \
-                    "3600000"
-                server_props["confluent.metadata."
-                             "server.token.signature.algorithm"] = "RS256"
-                server_props["confluent.metadata."
-                             "topic.replication.factor"] = "3"
 
         # Zookeeper options:
         self.model.unit.status = \
@@ -1104,33 +1142,22 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         ctx["keytab_opts"] = self.keytab_b64
 
         # 5) Restart Strategy
-        if self.unit.is_leader():
-            # Now, we need to always handle the locks, even if acquire() was
-            # not called since _check_if_need_restart returned False.
-            # Therefore, we need to manually handle those locks.
-            # If _check_if_need_restart returns True, then the locks will be
-            # managed at the restart event and config-changed is closed with a
-            # return.
-            coordinator = OpsCoordinator()
-            coordinator.resume()
-            coordinator.release()
-
-        # 5.1) Check if called via InstallEvent
-        # Check if the unit has never been restarted (running InstallEvent).
-        # In these cases, there is no reason to
-        # request for the a restart to the cluster, instead simply restart.
-        # For the "failed" case, check if service-restart-failed is set
-        # if so, restart it.
-        if isinstance(event, InstallEvent) and \
-           self.config["service-restart-on-fail"]:
-            for svc in self.services:
-                service_resume(svc)
-                service_restart(svc)
-            self.model.unit.status = \
-                ActiveStatus("Service is running")
+        if not service_running(self.service) and \
+           not self.config.get("manual_restart", True):
+            # Service is not running, there is no point in issuing a restart
+            # event. Restart it right away.
+            service_resume(self.service)
+            service_restart(self.service)
+            if seervice_running(self.service):
+                self.model.unit.status = \
+                    ActiveStatus("Service is running")
+            else:
+                BlockedStatus("Service not running that "
+                               "should be: {}".format(self.services))
             return
 
-        # Now, restart service
+        # Now, service is operational. Restart service with an event to
+        # avoid any conflicts wth other running units.
         self.model.unit.status = \
             MaintenanceStatus("Building context...")
         logger.debug("Context: {}, saved state is: {}".format(
@@ -1141,7 +1168,6 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
             self.ks.need_restart = True
             self.model.unit.status = \
                 BlockedStatus("Waiting for restart event")
-            return
         elif service_running(self.service):
             self.model.unit.status = \
                 ActiveStatus("Service is running")
@@ -1149,16 +1175,6 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
             self.model.unit.status = \
                 BlockedStatus("Service not running that "
                               "should be: {}".format(self.services))
-
-        # 6) Open ports
-        # 6.1) Close original ports
-        for p in self.ks.ports:
-            close_port(p)
-        # 6.2) Open ports for the newly found listeners
-        for p in self.listener.get_ports():
-            open_port(p)
-        # 6.3) Update the ports list
-        self.ks.ports = self.listener.get_ports()
 
 
 if __name__ == "__main__":
