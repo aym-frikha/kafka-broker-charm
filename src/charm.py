@@ -44,8 +44,7 @@ from wand.apps.relations.tls_certificates import (
 )
 
 from charmhelpers.core.hookenv import (
-    open_port,
-    close_port
+    open_port
 )
 
 from wand.security.ssl import (
@@ -1148,12 +1147,12 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
             # event. Restart it right away.
             service_resume(self.service)
             service_restart(self.service)
-            if seervice_running(self.service):
+            if service_running(self.service):
                 self.model.unit.status = \
                     ActiveStatus("Service is running")
             else:
                 BlockedStatus("Service not running that "
-                               "should be: {}".format(self.services))
+                              "should be: {}".format(self.services))
             return
 
         # Now, service is operational. Restart service with an event to

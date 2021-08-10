@@ -46,9 +46,12 @@ Therefore, listeners are managed according to spaces.
 
 ### Certificate management
 
-Kafka uses a keystore to contain the certificate and keys for TLS. Besides, it uses a truststore with all the trusted certificates for each unit. Each listener gets its own keystore / truststore.
+Kafka uses a keystore to contain the certificate and keys for TLS. Besides, it uses a truststore with all the trusted certificates for each unit.
 
-TODO: If keystore is set to empty, certificates will not be used for that listener.
+Truststore should always be set since relations may use certificates that are not trusted by default by Java's upstream truststores.
+Units will learn certificate information from its peers and across relations and store them in the truststore.
+
+If keystore is set to empty, certificates will not be used for that listener.
 
 ### JMX Exporter support
 
@@ -56,7 +59,7 @@ Kafka's JVM can export information to Prometheus. Setup the integration
 with the following options:
 
 ```
-    jmx_exporter_version: v0.12
+    jmx_exporter_version: 0.12
     jmx_exporter_url: Maven's URL from where JMX jar can be downloaded.
         Format it to replace the versions.
     jmx-exporter-port: Port to be exposed by the exporter for prometheus.

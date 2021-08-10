@@ -125,7 +125,6 @@ class TestCharm(unittest.TestCase):
     @patch.object(cluster, 'get_hostname')
     @patch.object(kafka_relation_base, 'CreateTruststore')
     @patch.object(charm, 'CreateTruststore')
-    @patch.object(charm, 'close_port')
     @patch.object(charm, 'open_port')
     @patch.object(charm.KafkaBrokerCharm, '_check_if_ready_to_start')
     @patch.object(charm, 'service_resume')
@@ -174,7 +173,6 @@ class TestCharm(unittest.TestCase):
                             mock_svc_resume,
                             mock_check_if_ready_restart,
                             mock_open_port,
-                            mock_close_port,
                             mock_create_ts,
                             mock_rel_base_create_ts,
                             mock_get_hostname,
@@ -326,7 +324,6 @@ class TestCharm(unittest.TestCase):
     @patch.object(cluster, 'get_hostname')
     @patch.object(kafka_relation_base, 'CreateTruststore')
     @patch.object(charm, 'CreateTruststore')
-    @patch.object(charm, 'close_port')
     @patch.object(charm, 'open_port')
     @patch.object(charm.KafkaBrokerCharm, '_check_if_ready_to_start')
     @patch.object(charm, 'service_resume')
@@ -375,7 +372,6 @@ class TestCharm(unittest.TestCase):
                             mock_svc_resume,
                             mock_check_if_ready_restart,
                             mock_open_port,
-                            mock_close_port,
                             mock_create_ts,
                             mock_rel_base_create_ts,
                             mock_get_hostname,
