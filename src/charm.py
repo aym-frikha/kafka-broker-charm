@@ -159,7 +159,7 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
                 labels=self.config.get("jmx_exporter_labels", None))
         self.nrpe = KafkaJavaCharmBaseNRPEMonitoring(
             self,
-            svcs=[self._get_service_name()],
+            svcs=[],
             endpoints=[],
             nrpe_relation_name='nrpe-external-master')
         # Now, we need to always handle the locks
@@ -885,10 +885,18 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         # for p in self.ks.ports:
         #     close_port(p)
         prts = []
-        for k, v in json.loads(listeners).items():
+        e_lst = self.listener._convert_listener_template(listeners)
+        for k, v in e_lst.items():
             open_port(v["port"])
             prts.append(v["port"])
         self.ks.ports = prts
+        # Update endpoints
+        endpoints = \
+            [v["endpoint"].split("://")[1] for k, v in e_lst.items()]
+        self.nrpe.recommit_checks(
+            svcs=[],
+            endpoints=endpoints
+        )
 
         if len(self.listener.get_sasl_mechanisms_list()) > 0:
             server_props["sasl.enabled.mechanisms"] = ",".join(
