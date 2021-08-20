@@ -51,6 +51,26 @@ options:
     description: |
       Define which of the SASL protocols should be used for authentication. In the case of Zookeeper,
       only kerberos and digest methods are available.
+  filepath-zookeeper-client-properties:
+    default: "/etc/kafka/zookeeper-tls-client.properties"
+    type: string
+    description: |
+      Path to zookeeper's TLS client properties file
+  filepath-server-properties:
+    default: "/etc/kafka/server.properties"
+    type: string
+    description: |
+      Path to server.properties file
+  filepath-kafka-client-properties:
+    default: "/etc/kafka/client.properties"
+    type: string
+    description: |
+      Path to client.properties file
+  filepath-jaas-conf:
+    default: "/etc/kafka/jaas.conf"
+    type: string
+    description: |
+      Path to jaas.conf
   kerberos-admin-hostname:
     default: ''
     type: string

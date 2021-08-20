@@ -8,6 +8,8 @@ import os
 import socket
 import yaml
 import json
+import shutil
+import subprocess
 
 from ops.main import main
 from ops.model import (
@@ -149,6 +151,7 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         self.ks.set_default(config_state="{}")
         self.ks.set_default(need_restart=False)
         self.ks.set_default(ports=[])
+        self.ks.set_default(endpoints=[])
         # LMA integrations
         self.prometheus = \
             KafkaJavaCharmBasePrometheusMonitorNode(
@@ -221,8 +224,24 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
             # Toggle need_restart as we just did it.
             self.ks.need_restart = False
             logger.debug("EVENT DEBUG: restart event.restart() successful")
-            self.model.unit.status = \
-                ActiveStatus("service running")
+
+            # Do not drop the need_restart. The reason is because kafka broker
+            # is configured in its service for no-restart as well. Therefore,
+            # if a failure happens, it is expected for the operator to come
+            # in and manually check the logs and status.
+            # We will follow the same logic. If failed, just generate a warn
+            # in both status and charm logs; then abandon all the other events
+            # by leaving need_restart set to False. Once the operator takes
+            # actions, he/she should issue a new restart.
+            if self.check_ports_are_open(
+                    endpoints=self.ks.endpoints,
+                    retrials=3):
+                self.model.unit.status = \
+                    ActiveStatus("service running")
+            else:
+                logger.warning("Failure at restart, operator should check")
+                self.model.unit.status = \
+                    BlockedStatus("Restart Failed, check service")
         else:
             # defer the RestartEvent as it is still waiting for the
             # lock to be released.
@@ -496,12 +515,19 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         packages = []
         if self.config.get("install_method") == "archive":
             self._install_tarball()
-        else:
+        elif self.distro == "confluent" or self.distro == "apache":
             if self.distro == "confluent":
                 packages = CONFLUENT_PACKAGES + ['libsystemd-dev']
             else:
                 raise Exception("Not Implemented Yet")
-            super().install_packages('openjdk-11-headless', packages)
+        elif self.distro == "apache_snap":
+            # Override prometheus jar file
+            self.JMX_EXPORTER_JAR_FOLDER = \
+                "/snap/kafka/current/jar/"
+
+        # Install packages will install snap in this case
+        super().install_packages('openjdk-11-headless', packages)
+
         # The logic below avoid an error such as more than one entry
         # In this case, we will pick the first entry
         data_log_fs = \
@@ -897,6 +923,8 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
             svcs=[],
             endpoints=endpoints
         )
+        # This is used in the restart logic
+        self.ks.endpoints = endpoints
 
         if len(self.listener.get_sasl_mechanisms_list()) > 0:
             server_props["sasl.enabled.mechanisms"] = ",".join(
@@ -969,8 +997,9 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
                                  "Java truststore will be used instead")
                 logger.debug("Options for TLS client: "
                              "{}".format(",".join(client_props)))
+                target = self.config["filepath-zookeeper-client-properties"]
                 render(source="zookeeper-tls-client.properties.j2",
-                       target="/etc/kafka/zookeeper-tls-client.properties",
+                       target=target,
                        owner=self.config.get('user'),
                        group=self.config.get("group"),
                        perms=0o640,
@@ -988,7 +1017,7 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
                      "{}".format(",".join(server_props)))
         # Back to server.properties, render it
         render(source="server.properties.j2",
-               target="/etc/kafka/server.properties",
+               target=self.config["filepath-server-properties"],
                owner=self.config.get('user'),
                group=self.config.get("group"),
                perms=0o640,
@@ -1035,7 +1064,7 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
             self.model.unit.status = BlockedStatus(str(e))
             return
         render(source="client.properties.j2",
-               target="/etc/kafka/client.properties",
+               target=self.config["filepath-kafka-client-properties"],
                owner=self.config.get('user'),
                group=self.config.get("group"),
                perms=0o640,
@@ -1047,12 +1076,15 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
     def _get_service_name(self):
         if self.distro == "confluent":
             self.service = "confluent-server"
+        elif self.distro == "apache_snap":
+            self.service = "snap.kafka.kafka"
         else:
             self.service = "kafka"
         return self.service
 
     def _render_jaas_conf(self, jaas_path="/etc/kafka/jaas.conf"):
         content = ""
+        jaas_file = self.config["filepath-jaas-conf"]
         if self.is_sasl_kerberos_enabled():
             krb = """KafkaServer {{
     com.sun.security.auth.module.Krb5LoginModule required
@@ -1074,10 +1106,10 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
     principal="{}";
 }};
 """.format(self.keytab, self.kerberos_principal) # noqa
-        self.set_folders_and_permissions([os.path.dirname(jaas_path)])
-        with open(jaas_path, "w") as f:
+        self.set_folders_and_permissions([os.path.dirname(jaas_file)])
+        with open(jaas_file, "w") as f:
             f.write(content)
-        setFilePermissions(jaas_path, self.config.get("user", "root"),
+        setFilePermissions(jaas_file, self.config.get("user", "root"),
                            self.config.get("group", "root"), 0o640)
         return content
 
@@ -1143,9 +1175,13 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         ctx["client_opts"] = self._generate_client_properties()
         self.model.unit.status = \
             MaintenanceStatus("Render service override.conf")
+        jmx_file_name = \
+            "/opt/prometheus/prometheus.yaml" if self.distro != "apache_snap" \
+            else "/var/snap/kafka/common/prometheus.yaml"
         ctx["svc_opts"] = self.render_service_override_file(
             target="/etc/systemd/system/"
-                   "{}.service.d/override.conf".format(self.service))
+                   "{}.service.d/override.conf".format(self.service),
+            jmx_file_name=jmx_file_name)
         ctx["keytab_opts"] = self.keytab_b64
 
         # 5) Restart Strategy

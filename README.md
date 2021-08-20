@@ -44,6 +44,53 @@ For example, brokers and REST units will communicate on an internal network, the
 
 Therefore, listeners are managed according to spaces.
 
+### Distros
+
+Kafka charms accept several types of distros: confluent, apache and apache_snap. Confluent will select to use confluent packages and demands a license key from confluent to correctly setup the environment.
+Apache_snap uses the upstream code available for Kafka clusters. That code has been compiled into snaps and can be readily deployed.
+
+WIP: Apache distro is still under implementation.
+
+### Data Folders
+
+Some types of services of kafka demands directories to store data, such as kafka brokers, ksqldb and, in Confluent case, Confluent Center.
+
+There are some options on how to configure the folders correctly for your service. First option is to use charm configs. That allows to either specify existing folders or folder + disks, in which the disk
+will zapped with a new filesystem and mounted to the folder. Dedicating a disk is optional, one can also just specify a folder in the rootfs of your system.
+
+Here are some configuration examples:
+
+1) Just specify a folder to be created under rootfs and used as data in Kafka charm. In the example below, a filesystem will be specified as well, but that value will be ignored given a disk is not 
+passed as well.
+
+```
+
+kafka:
+  options:
+    data-log-dir: |
+      ext4: /data
+
+```
+
+2) Specify a folder and a device (vdc for /log and vdd for /data):
+
+```
+
+kafka:
+  options:
+    data-log-dir: |
+      ext4: /log
+      xfs: /data
+    data-log-device:
+      - /dev/vdc
+      - /dev/vdd
+
+```
+
+WIP: The last option is to use the storage backend provided by Juju. In that case, up to 32 disks can be specified, and they will be mounted as XFS and each directory will be named /data{1..32}.
+
+WARNING: For production scenarios, it is recommended to use dedicated disks for data.
+
 ### Certificate management
 
 Kafka uses a keystore to contain the certificate and keys for TLS. Besides, it uses a truststore with all the trusted certificates for each unit.

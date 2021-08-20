@@ -3,6 +3,7 @@
 
 import os
 import unittest
+import shutil
 from mock import patch
 from mock import PropertyMock
 import base64
@@ -112,6 +113,7 @@ class TestCharm(unittest.TestCase):
         for p in TO_PATCH_HOST:
             self._patch(charm, p)
 
+    @patch.object(shutil, "which")
     @patch.object(charm, "OpsCoordinator")
     @patch.object(kafka_listener.KafkaListenerProvidesRelation,
                   'advertise_addr', new_callabl=PropertyMock)
@@ -181,11 +183,13 @@ class TestCharm(unittest.TestCase):
                             mock_list_binding_addr,
                             mock_cluster_advertise_addr,
                             mock_list_advertise_addr,
-                            mock_ops_coordinator):
+                            mock_ops_coordinator,
+                            mock_shutil_which):
         """Test configuration changed with a cluster + 1x unit ZK.
         Use certificates passed via options and this is leader unit.
         Check each of the properties generated using mock_render.
         """
+        mock_shutil_which.return_value = True
         # Avoid triggering the RestartEvent
         mock_service_running.return_value = False
         mock_check_if_ready_restart.return_value = False
@@ -311,6 +315,7 @@ class TestCharm(unittest.TestCase):
                 'zookeeper.ssl.truststore.password': 'confluentkeystorepass'}}
         )
 
+    @patch.object(shutil, "which")
     @patch.object(charm, "OpsCoordinator")
     @patch.object(kafka_listener.KafkaListenerProvidesRelation,
                   'advertise_addr', new_callabl=PropertyMock)
@@ -380,11 +385,13 @@ class TestCharm(unittest.TestCase):
                             mock_list_binding_addr,
                             mock_cluster_advertise_addr,
                             mock_list_advertise_addr,
-                            mock_ops_coordinator):
+                            mock_ops_coordinator,
+                            mock_shutil_which):
         """Test configuration changed with a cluster + 1x unit ZK.
         Use certificates passed via options and this is leader unit.
         Add listener relations with 2x applications but no SASL.
         """
+        mock_shutil_which.return_value = True
         # Avoid triggering the RestartEvent
         mock_service_running.return_value = False
         mock_check_if_ready_restart.return_value = False
