@@ -8,8 +8,6 @@ import os
 import socket
 import yaml
 import json
-import shutil
-import subprocess
 
 from ops.main import main
 from ops.model import (
@@ -218,26 +216,22 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
                          " need_restart is unset")
             return
         if event.restart():
-            # Restart was successful, if the charm is keeping track
-            # of a context, that is the place it should be updated
-            self.ks.config_state = event.ctx
-            # Toggle need_restart as we just did it.
-            self.ks.need_restart = False
-            logger.debug("EVENT DEBUG: restart event.restart() successful")
-
-            # Do not drop the need_restart. The reason is because kafka broker
-            # is configured in its service for no-restart as well. Therefore,
-            # if a failure happens, it is expected for the operator to come
-            # in and manually check the logs and status.
-            # We will follow the same logic. If failed, just generate a warn
-            # in both status and charm logs; then abandon all the other events
-            # by leaving need_restart set to False. Once the operator takes
-            # actions, he/she should issue a new restart.
             if self.check_ports_are_open(
                     endpoints=self.ks.endpoints,
                     retrials=3):
+                # Restart was successful, update need_restart and inform
+                # the clients via listener relation
                 self.model.unit.status = \
                     ActiveStatus("service running")
+                # Restart was successful, if the charm is keeping track
+                # of a context, that is the place it should be updated
+                self.ks.config_state = event.ctx
+                # Toggle need_restart as we just did it.
+                self.ks.need_restart = False
+                logger.debug("EVENT DEBUG: restart event.restart() successful")
+                # Inform the clients on listener relation:
+                self.coordinator.run_action()
+
             else:
                 logger.warning("Failure at restart, operator should check")
                 self.model.unit.status = \
@@ -808,7 +802,7 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
                 server_props["confluent.metadata.server.advertised.listeners"]
             # Now read each of the units' in the cluster relation
             # Inform listener requirers of MDS endpoint
-            self.listeners.set_mds_endpoint(
+            self.listener.set_mds_endpoint(
                 ",".join(
                     [cluster_data[u]["mds_url"]
                      for u in self.cluster.relation.units]),
@@ -936,7 +930,9 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
                     listeners["broker"]["SASL"]
 
         # Each unit sets its own data
-        self.listener.set_bootstrap_data(listeners)
+        # set coordinator's action to share the listener data with
+        self.coordinator.save_action(
+            self.listener.set_bootstrap_data, [listeners])
         logger.debug("Found listeners: {}".format(listeners))
         server_props = {**server_props, **listener_opts}
 
@@ -1113,6 +1109,27 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
                            self.config.get("group", "root"), 0o640)
         return content
 
+    def _render_kafka_log4j_properties(self):
+        root_logger = self.config.get("log4j-root-logger", None) or \
+            "INFO, stdout, file"
+        if self.distro == "apache_snap":
+            kafka_logger_path = "/var/snap/kafka/common/kafka.log"
+        else:
+            kafka_logger_path = "/var/log/kafka/kafka.log"
+        self.model.unit.status = MaintenanceStatus("Rendering log4j...")
+        logger.debug("Rendering log4j")
+        target = self.config["filepath-lg4j-properties"]
+        render(source="log4j.properties.j2",
+               target=target,
+               owner=self.config.get('user'),
+               group=self.config.get("group"),
+               perms=0o640,
+               context={
+                   "root_logger": root_logger,
+                   "kafka-logger-path": kafka_logger_path,
+               })
+        return root_logger
+
     def _on_config_changed(self, event):
         """CONFIG CHANGE
 
@@ -1175,13 +1192,13 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         ctx["client_opts"] = self._generate_client_properties()
         self.model.unit.status = \
             MaintenanceStatus("Render service override.conf")
-        jmx_file_name = \
-            "/opt/prometheus/prometheus.yaml" if self.distro != "apache_snap" \
-            else "/var/snap/kafka/common/prometheus.yaml"
+        #jmx_file_name = \
+        #    "/opt/prometheus/prometheus.yaml" if self.distro != "apache_snap" \
+        #    else "/var/snap/kafka/common/prometheus.yaml"
         ctx["svc_opts"] = self.render_service_override_file(
             target="/etc/systemd/system/"
-                   "{}.service.d/override.conf".format(self.service),
-            jmx_file_name=jmx_file_name)
+                   "{}.service.d/override.conf".format(self.service)) #,
+        #    jmx_file_name=jmx_file_name)
         ctx["keytab_opts"] = self.keytab_b64
 
         # 5) Restart Strategy

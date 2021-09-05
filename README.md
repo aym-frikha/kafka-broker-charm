@@ -100,6 +100,26 @@ Units will learn certificate information from its peers and across relations and
 
 If keystore is set to empty, certificates will not be used for that listener.
 
+#### Manage Certificates within the Truststore
+
+If Keystore and Truststore are specified, users can add certificates to be globally trusted by an application. Users can add certificates to truststore using:
+
+```
+    $ juju run-action add-certificate certs=<multi-line-string-of-certs>
+```
+
+If the user wants to empty out the truststore of any custom added certs, run:
+
+```
+    $ juju run-action remove-certificates
+```
+
+If the user wants to list manually added certs to the Truststore:
+
+```
+    $ juju run-action list-certificates
+```
+
 ### JMX Exporter support
 
 Kafka's JVM can export information to Prometheus. Setup the integration
@@ -166,6 +186,77 @@ relations:
 
 Create and activate a virtualenv with the development requirements:
 
+```
     virtualenv -p python3 venv
     source venv/bin/activate
     pip install -r requirements-dev.txt
+```
+
+### Certificate and Key Management
+
+The charm will generate keystores and truststores separately for spaces whenever it is possible. If the application supports, for example, different stores for a schema-registry and listener relations,
+then generate one per relation. In Kafka, keystores will be relevant whenever the unit must authenticate via TLS. That can happen if the unit is acting as a server (e.g. Kafka Broker) or 
+if mutual authentication for TLS has been implemented.
+
+
+Java does come with default Truststores which contain widely trusted CAs. However, implementing its own truststores allows the operator to control if they want to use self-signed certs across the stack.
+
+Therefore, if the operator specifies a keystore and truststore, then they should be configured instead of using openjdk's defaults.
+
+The logic to decide if a keystore or truststore will be used is similar to (remember, keystore definition is the gate to decide if TLS will be used or not):
+
+```
+if len(self.get_ssl_keystore()) > 0:
+    # User specified a keystore, check if cert/key are also configured
+    if len(self.get_ssl_key()) > 0 and len(self.get_ssl_cert()) > 0:
+        # Start logic to generate the keystore
+
+    # Now, a custom cert has been specified, create a store
+    if len(self.get_ssl_truststore()) > 0 and len(self.get_ssl_cert()) > 0:
+        CreateTruststore(...)
+```
+
+Besides the certificate specified via config option OR tls-certificates, the charm needs to share that certificate with its relation peers and add any cert specified by the user.
+
+```
+
+    if len(self.get_ssl_truststore()) > 0 and len(self.get_ssl_cert()) > 0:
+        crt_list = [self.get_ssl_cert()]
+
+        # Find all the certs shared across the relation
+        for r in self.RELATION.relations:
+            r.data[self.unit]["tls-cert"] = self.get_ssl_cert()
+
+            for u in r.units:
+                if "tls-cert" in r.data[u]:
+                    crt_list.append(r.data[u]["tls-cert"])
+
+        # Now, recover user-defined certs passed via action
+        if self.ks.ssl_certs:
+            crt_list.extend(self.ks.ssl_certs)
+
+        CreateTruststore(...)
+```
+
+Keystores will be generated using JavaCharmBase ```_generate_keystores``` method. 
+
+For that, the charm code must specify a list of lists, each sub-list contain methods and data to generate the Keystore, example:
+
+```
+    def _generate_keystores(self):
+        """Generate the keystores using JavaCharmBase method"""
+
+        ks = [[self.ks.ssl_cert, self.ks.ssl_key, self.ks.ks_password,
+               self.get_ssl_cert, self.get_ssl_key, self.get_ssl_keystore],
+
+              [self.ks.ssl_sr_cert, self.ks.ssl_sr_key, self.ks.ks_sr_pwd,
+               self.get_ssl_sr_cert, self.get_ssl_sr_key,
+               self.get_ssl_sr_keystore],
+
+              [self.ks.ssl_listener_cert, self.ks.ssl_listener_key,
+               self.ks.ks_listener_pwd,
+               self.get_ssl_listener_cert, self.get_ssl_listener_key,
+               self.get_ssl_listener_keystore]]
+        # Call the method from JavaCharmBase
+        super()._generate_keystores(ks)
+```

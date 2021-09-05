@@ -71,6 +71,11 @@ options:
     type: string
     description: |
       Path to jaas.conf
+  filepath-lg4j-properties:
+    default: "/etc/kafka/log4j.properties"
+    type: string
+    description: |
+      Path to the kafka broker's log4j properties.
   kerberos-admin-hostname:
     default: ''
     type: string
@@ -351,6 +356,11 @@ options:
       Only the first folder will be taken into consideration. The <fs-type> is used by the charm
       if log-device is also set.
       The folders in this option will form the log.dirs
+  log4j-root-logger:
+    type: string
+    default: "INFO, stdout, kafkaAppender"
+    description: |
+      Set value for root logger on Kafka Brokers.
   nagios_context:
     default: "juju"
     type: string
