@@ -1118,15 +1118,15 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
             kafka_logger_path = "/var/log/kafka/kafka.log"
         self.model.unit.status = MaintenanceStatus("Rendering log4j...")
         logger.debug("Rendering log4j")
-        target = self.config["filepath-lg4j-properties"]
+        target = self.config["filepath-log4j-properties"]
         render(source="log4j.properties.j2",
                target=target,
                owner=self.config.get('user'),
                group=self.config.get("group"),
                perms=0o640,
                context={
-                   "root_logger": root_logger,
-                   "kafka-logger-path": kafka_logger_path,
+                   "log4j_root_logger": root_logger,
+                   "kafka_logger_path": kafka_logger_path,
                })
         return root_logger
 
@@ -1192,14 +1192,11 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         ctx["client_opts"] = self._generate_client_properties()
         self.model.unit.status = \
             MaintenanceStatus("Render service override.conf")
-        #jmx_file_name = \
-        #    "/opt/prometheus/prometheus.yaml" if self.distro != "apache_snap" \
-        #    else "/var/snap/kafka/common/prometheus.yaml"
         ctx["svc_opts"] = self.render_service_override_file(
             target="/etc/systemd/system/"
-                   "{}.service.d/override.conf".format(self.service)) #,
-        #    jmx_file_name=jmx_file_name)
+                   "{}.service.d/override.conf".format(self.service))
         ctx["keytab_opts"] = self.keytab_b64
+        ctx["log4j_config"] = self._render_kafka_log4j_properties()
 
         # 5) Restart Strategy
         if not service_running(self.service) and \

@@ -114,6 +114,7 @@ class TestCharm(unittest.TestCase):
             self._patch(charm, p)
 
     @patch.object(shutil, "which")
+    @patch.object(os, "makedirs")
     @patch.object(charm, "OpsCoordinator")
     @patch.object(kafka_listener.KafkaListenerProvidesRelation,
                   'advertise_addr', new_callabl=PropertyMock)
@@ -184,6 +185,7 @@ class TestCharm(unittest.TestCase):
                             mock_cluster_advertise_addr,
                             mock_list_advertise_addr,
                             mock_ops_coordinator,
+                            mock_os_makedirs,
                             mock_shutil_which):
         """Test configuration changed with a cluster + 1x unit ZK.
         Use certificates passed via options and this is leader unit.
@@ -316,6 +318,7 @@ class TestCharm(unittest.TestCase):
         )
 
     @patch.object(shutil, "which")
+    @patch.object(os, "makedirs")
     @patch.object(charm, "OpsCoordinator")
     @patch.object(kafka_listener.KafkaListenerProvidesRelation,
                   'advertise_addr', new_callabl=PropertyMock)
@@ -386,6 +389,7 @@ class TestCharm(unittest.TestCase):
                             mock_cluster_advertise_addr,
                             mock_list_advertise_addr,
                             mock_ops_coordinator,
+                            mock_os_makedirs,
                             mock_shutil_which):
         """Test configuration changed with a cluster + 1x unit ZK.
         Use certificates passed via options and this is leader unit.

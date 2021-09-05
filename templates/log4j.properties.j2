@@ -14,12 +14,14 @@
 # limitations under the License.
 
 # Define the root logger with appender file
-log4j.rootLogger = {{ log4j-root-logger }}
+log4j.rootLogger={{ log4j_root_logger }}
 
-log4j.appender.FILE=org.apache.log4j.FileAppender
-log4j.appender.FILE.File={{ kafka-logger-path }}
-log4j.appender.FILE.ImmediateFlush=true
-# Set the append to false, overwrite
-log4j.appender.FILE.Append=false
-log4j.appender.FILE.layout=org.apache.log4j.PatternLayout
-log4j.appender.FILE.layout.conversionPattern=[%d] %p %m (%c)%n
+log4j.appender.stdout=org.apache.log4j.ConsoleAppender
+log4j.appender.stdout.layout=org.apache.log4j.PatternLayout
+log4j.appender.stdout.layout.ConversionPattern=[%d] %p %m (%c)%n
+
+log4j.appender.kafkaAppender=org.apache.log4j.DailyRollingFileAppender
+log4j.appender.kafkaAppender.DatePattern='.'yyyy-MM-dd-HH
+log4j.appender.kafkaAppender.File={{ kafka_logger_path }}
+log4j.appender.kafkaAppender.layout=org.apache.log4j.PatternLayout
+log4j.appender.kafkaAppender.layout.ConversionPattern=[%d] %p %m (%c)%n
