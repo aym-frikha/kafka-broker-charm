@@ -168,6 +168,9 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         # always manage the locks.
         self.coordinator = OpsCoordinator()
         self.coordinator.resume()
+        # List of listeners to be passed via relation if restart is
+        # successful
+        self.listener_info = None
 
     def __del__(self):
         self.coordinator.release()
@@ -214,8 +217,12 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
             # waiting for processing.
             logger.debug("EVENT DEBUG: restart event abandoned,"
                          " need_restart is unset")
+            if self.listener_info:
+                logger.debug("Running bootstrap_data: {}".format(
+                    self.listener_info))
+                self.listener.set_bootstrap_data(self.listener_info)
             return
-        if event.restart():
+        if event.restart(self.coordinator):
             if self.check_ports_are_open(
                     endpoints=self.ks.endpoints,
                     retrials=3):
@@ -230,7 +237,11 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
                 self.ks.need_restart = False
                 logger.debug("EVENT DEBUG: restart event.restart() successful")
                 # Inform the clients on listener relation:
-                self.coordinator.run_action()
+                # self.coordinator.run_action()
+                if self.listener_info:
+                    logger.debug("Running bootstrap_data: {}".format(
+                        self.listener_info))
+                    self.listener.set_bootstrap_data(self.listener_info)
 
             else:
                 logger.warning("Failure at restart, operator should check")
@@ -929,10 +940,7 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
                              "inter.broker.protocol"] = \
                     listeners["broker"]["SASL"]
 
-        # Each unit sets its own data
-        # set coordinator's action to share the listener data with
-        self.coordinator.save_action(
-            self.listener.set_bootstrap_data, [listeners])
+        self.listener_info = listeners
         logger.debug("Found listeners: {}".format(listeners))
         server_props = {**server_props, **listener_opts}
 
@@ -1192,27 +1200,20 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         ctx["client_opts"] = self._generate_client_properties()
         self.model.unit.status = \
             MaintenanceStatus("Render service override.conf")
-        ctx["svc_opts"] = self.render_service_override_file(
-            target="/etc/systemd/system/"
-                   "{}.service.d/override.conf".format(self.service))
+        if self.distro == "apache_snap":
+            ctx["svc_opts"] = self.render_service_override_file(
+                target="/etc/systemd/system/"
+                       "{}.service.d/override.conf".format(self.service),
+                jmx_jar_folder="/snap/kafka/current/jar/",
+                jmx_file_name="/var/snap/kafka/common/prometheus.yaml")
+        else:
+            ctx["svc_opts"] = self.render_service_override_file(
+                target="/etc/systemd/system/"
+                       "{}.service.d/override.conf".format(self.service))
         ctx["keytab_opts"] = self.keytab_b64
         ctx["log4j_config"] = self._render_kafka_log4j_properties()
 
         # 5) Restart Strategy
-        if not service_running(self.service) and \
-           not self.config.get("manual_restart", True):
-            # Service is not running, there is no point in issuing a restart
-            # event. Restart it right away.
-            service_resume(self.service)
-            service_restart(self.service)
-            if service_running(self.service):
-                self.model.unit.status = \
-                    ActiveStatus("Service is running")
-            else:
-                BlockedStatus("Service not running that "
-                              "should be: {}".format(self.services))
-            return
-
         # Now, service is operational. Restart service with an event to
         # avoid any conflicts wth other running units.
         self.model.unit.status = \
