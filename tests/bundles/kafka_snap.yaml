@@ -1,0 +1,74 @@
+applications:
+  # Using kafka name instead of kafka-broker because of prometheus/grafana name conventions
+  kafka:
+    charm: ../../kafka-broker.charm
+    num_units: 3
+    resources:
+      kafka: ../../kafka_2.8_amd64.snap
+    options:
+      user: root
+      group: root
+      replication-factor: 3
+      customize-failure-domain: False
+      generate-root-ca: False
+      distro: apache_snap
+      version: "2.8"
+      keystore-path: /var/snap/kafka/common/kafka-ks.jks
+      truststore-path: /var/snap/kafka/common/kafka-ts.jks
+      keystore-zookeeper-path: /var/snap/kafka/common/zk-ks.jks
+      truststore-zookeeper-path: /var/snap/kafka/common/zk-ts.jks
+      filepath-zookeeper-client-properties: /var/snap/kafka/common/zk-client.properties
+      filepath-server-properties: /var/snap/kafka/common/server.properties
+      filepath-kafka-client-properties: /var/snap/kafka/common/client.properties
+      filepath-jaas-conf: /var/snap/kafka/common/jaas.conf
+      filepath-log4j-properties: /var/snap/kafka/common/log4j.properties
+      clientAuth: False
+      jmx_exporter_labels: "job=kafka,env=test"
+      data-log-dir: |
+        ext4: /var/snap/kafka/common/data
+      log4j-root-logger: "DEBUG, stdout, kafkaAppender"
+      service-environment-overrides: |
+        KAFKA_HEAP_OPTS: "-Xms6g -Xmx6g -XX:MetaspaceSize=96m -XX:+UseG1GC -XX:MaxGCPauseMillis=20 -XX:InitiatingHeapOccupancyPercent=35 -XX:G1HeapRegionSize=16M -XX:MinMetaspaceFreeRatio=50 -XX:MaxMetaspaceFreeRatio=80"
+        KAFKA_LOG4J_OPTS: "-Dlog4j.configuration=file:/var/snap/kafka/common/log4j.properties"
+        LOG_DIR: /var/snap/kafka/common/
+  zookeeper:
+    charm: ../../zookeeper.charm
+    num_units: 3
+    resources:
+      zookeeper: "../../zookeeper_3.5.9_amd64.snap"
+    options:
+      version: "3.5.9"
+      distro: apache_snap
+      user: root # test
+      group: root # test
+      quorum-keystore-path: /var/snap/zookeeper/common/quorum-ks.jks
+      quorum-truststore-path: /var/snap/zookeeper/common/quorum-ts.jks
+      keystore-path: /var/snap/zookeeper/common/ssl-ks.jks
+      # Only charms related to this ZK will be able to connect
+      truststore-path: /var/snap/zookeeper/common/ssl-ts.jks
+      data-log-dir: |
+        ext4: "/var/snap/zookeeper/common/zookeeper_log"
+      data-dir: |
+        ext4: "/var/snap/zookeeper/common/zookeeper_data"
+      filepath-zookeeper-properties: /var/snap/zookeeper/common/zookeeper.properties
+      filepath-zookeeper-log4j-properties: /var/snap/zookeeper/common/zookeeper_log4j.properties
+      generate-root-ca: false
+      sslQuorum: false
+      log4j-root-logger: "DEBUG, stdout, zkAppender"
+      jmx_exporter_labels: "job=zookeeper,env=test"
+      service-environment-overrides: |
+        ZOO_LOG_DIR: /var/snap/zookeeper/common/logs
+        CLASSPATH: /snap/zookeeper/current/zookeeper-server/*:/snap/zookeeper/current/bin/zookeeper-server/target/lib/*
+        JVMFLAGS: -Dlog4j.configuration=file:/var/snap/zookeeper/common/zookeeper_log4j.properties -Xmx1g
+        ZOOCFGDIR: /var/snap/zookeeper/common/
+        ZOOCFG: /var/snap/zookeeper/common/zookeeper.properties
+  easyrsa:
+    charm: cs:~containers/easyrsa
+    num_units: 1
+relations:
+- - zookeeper
+  - easyrsa
+- - kafka
+  - easyrsa
+- - kafka
+  - zookeeper
