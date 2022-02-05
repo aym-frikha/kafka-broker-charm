@@ -2533,7 +2533,7 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": null,
-          "description": "Latency in millseconds for ZooKeeper requests from broker.\n",
+          "description": "Latency in milliseconds for ZooKeeper requests from broker.\n",
           "fieldConfig": {
             "defaults": {
               "custom": {}
@@ -3435,7 +3435,7 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": null,
-          "description": "A high value can imply there aren't enough IO threads or the CPU is a bottleneck, or the request queue isnt large enough. The request queue size should match the number of connections.",
+          "description": "A high value can imply there aren't enough IO threads or the CPU is a bottleneck, or the request queue isn't large enough. The request queue size should match the number of connections.",
           "fieldConfig": {
             "defaults": {
               "custom": {}
@@ -3720,7 +3720,7 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": null,
-          "description": "A high value can imply there aren't enough network threads or the network cant dequeue responses quickly enough, causing back pressure in the response queue.\n",
+          "description": "A high value can imply there aren't enough network threads or the network can't dequeue responses quickly enough, causing back pressure in the response queue.\n",
           "fieldConfig": {
             "defaults": {
               "custom": {}
@@ -3815,7 +3815,7 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": null,
-          "description": "A high value can imply the zero-copy from disk to the network is slow, or the network is the bottleneck because the network cant dequeue responses of the TCP socket as quickly as theyre being created. If the network buffer gets full, Kafka will block.\n",
+          "description": "A high value can imply the zero-copy from disk to the network is slow, or the network is the bottleneck because the network can't dequeue responses of the TCP socket as quickly as they're being created. If the network buffer gets full, Kafka will block.\n",
           "fieldConfig": {
             "defaults": {
               "custom": {}
@@ -3925,7 +3925,7 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": null,
-          "description": "A high value can imply there aren't enough IO threads or the CPU is a bottleneck, or the request queue isnt large enough. The request queue size should match the number of connections.",
+          "description": "A high value can imply there aren't enough IO threads or the CPU is a bottleneck, or the request queue isn't large enough. The request queue size should match the number of connections.",
           "fieldConfig": {
             "defaults": {
               "custom": {}
@@ -4210,7 +4210,7 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": null,
-          "description": "A high value can imply there aren't enough network threads or the network cant dequeue responses quickly enough, causing back pressure in the response queue.\n",
+          "description": "A high value can imply there aren't enough network threads or the network can't dequeue responses quickly enough, causing back pressure in the response queue.\n",
           "fieldConfig": {
             "defaults": {
               "custom": {}
@@ -4305,7 +4305,7 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": null,
-          "description": "A high value can imply the zero-copy from disk to the network is slow, or the network is the bottleneck because the network cant dequeue responses of the TCP socket as quickly as theyre being created. If the network buffer gets full, Kafka will block.\n",
+          "description": "A high value can imply the zero-copy from disk to the network is slow, or the network is the bottleneck because the network can't dequeue responses of the TCP socket as quickly as they're being created. If the network buffer gets full, Kafka will block.\n",
           "fieldConfig": {
             "defaults": {
               "custom": {}
@@ -4415,7 +4415,7 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": null,
-          "description": "A high value can imply there aren't enough IO threads or the CPU is a bottleneck, or the request queue isnt large enough. The request queue size should match the number of connections.",
+          "description": "A high value can imply there aren't enough IO threads or the CPU is a bottleneck, or the request queue isn't large enough. The request queue size should match the number of connections.",
           "fieldConfig": {
             "defaults": {
               "custom": {}
@@ -4700,7 +4700,7 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": null,
-          "description": "A high value can imply there aren't enough network threads or the network cant dequeue responses quickly enough, causing back pressure in the response queue.\n",
+          "description": "A high value can imply there aren't enough network threads or the network can't dequeue responses quickly enough, causing back pressure in the response queue.\n",
           "fieldConfig": {
             "defaults": {
               "custom": {}
@@ -4795,7 +4795,7 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": null,
-          "description": "A high value can imply the zero-copy from disk to the network is slow, or the network is the bottleneck because the network cant dequeue responses of the TCP socket as quickly as theyre being created. If the network buffer gets full, Kafka will block.\n",
+          "description": "A high value can imply the zero-copy from disk to the network is slow, or the network is the bottleneck because the network can't dequeue responses of the TCP socket as quickly as they're being created. If the network buffer gets full, Kafka will block.\n",
           "fieldConfig": {
             "defaults": {
               "custom": {}
@@ -6522,7 +6522,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Number of procuded message conversion",
+          "title": "Number of produded message conversion",
           "tooltip": {
             "shared": true,
             "sort": 2,

@@ -18,7 +18,7 @@ from nrpe.client import NRPEClient
 
 import wand.apps.relations.kafka_relation_base as kafka_relation_base
 
-from unit_tests.config_files import SERVER_PROPS, SERVER_PROPS_LISTENERS
+from tests.unit.config_files import SERVER_PROPS, SERVER_PROPS_LISTENERS
 
 import wand.apps.kafka as kafka
 import wand.security as security

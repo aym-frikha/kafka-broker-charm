@@ -1,8 +1,16 @@
+"""
+
+Implements clustering Kafka Broker
+
+
+
+"""
+
 import os
 import socket
 from wand.contrib.linux import get_hostname
 
-from wand.apps.relations.kafka_relation_base import KafkaRelationBase
+from charms.kafka_base.v0.kafka_relation_base import KafkaRelationBase
 
 
 class KafkaBrokerCluster(KafkaRelationBase):

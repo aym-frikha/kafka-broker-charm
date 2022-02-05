@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-# Copyright 2021 pguimaraes
-# See LICENSE file for licensing details.
 
 import base64
 import logging
@@ -15,8 +13,6 @@ from ops.model import (
     ActiveStatus,
     BlockedStatus
 )
-
-from charmhelpers.core.templating import render
 
 from charmhelpers.core.host import (
     service_running,
@@ -43,8 +39,9 @@ from wand.apps.relations.tls_certificates import (
     TLSCertificateRelationNotPresentError
 )
 
-from charmhelpers.core.hookenv import (
-    open_port
+from charms.kafka_base.v0.charmhelper import (
+    open_port,
+    render
 )
 
 from wand.security.ssl import (
@@ -912,7 +909,7 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
             get_default=True,
             clientauth=self.config.get("clientAuth", False))
 
-        # Open listner ports:
+        # Open listener ports:
         # for p in self.ks.ports:
         #     close_port(p)
         prts = []
@@ -1153,7 +1150,7 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         # START CONFIG FILE UPDATES
         ctx = {}
 
-        logger.debug("Event triggerd config change: {}".format(event))
+        logger.debug("Event triggered config change: {}".format(event))
         # 1) Check Kerberos and ZK
         try:
             if self.is_sasl_kerberos_enabled() and not self.keytab:
@@ -1215,7 +1212,7 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
 
         # 5) Restart Strategy
         # Now, service is operational. Restart service with an event to
-        # avoid any conflicts wth other running units.
+        # avoid any conflicts with other running units.
         self.model.unit.status = \
             MaintenanceStatus("Building context...")
         logger.debug("Context: {}, saved state is: {}".format(
