@@ -6,7 +6,7 @@ from mock import (
     PropertyMock
 )
 
-from wand.apps.relations.kafka_listener import (
+from charms.kafka_broker.v0.kafka_listener import (
     KafkaListenerProvidesRelation,
 )
 

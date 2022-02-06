@@ -1,21 +1,22 @@
-"""
+"""Implements clustering Kafka Broker.
 
-Implements clustering Kafka Broker
-
-
+Cluster is the peer relation endpoint. Allows each peer to learn about
+listener details and certificates of each broker.
 
 """
 
 import os
 import socket
-from wand.contrib.linux import get_hostname
+from charms.kafka_broker.v0.kafka_linux import get_hostname
 
-from charms.kafka_base.v0.kafka_relation_base import KafkaRelationBase
+from charms.kafka_broker.v0.kafka_relation_base import KafkaRelationBase
 
 
 class KafkaBrokerCluster(KafkaRelationBase):
+    """Helper class that implements most of the common cluster tasks."""
 
     def __init__(self, charm, relation_name, min_units=3):
+        """Initialize the broker cluster relation"""
         super().__init__(charm, relation_name)
         self.state.set_default(peer_num_azs=0)
         self.state.set_default(listeners="")
@@ -26,23 +27,29 @@ class KafkaBrokerCluster(KafkaRelationBase):
 
     @property
     def min_units(self):
+        """Return the min number of units to start the cluster"""
         return self._min_units
 
     @min_units.setter
     def min_units(self, u):
+        """Set the min number of units to start the cluster"""
         self._min_units = u
 
     @property
     def enable_az(self):
+        """Inform if AZ-based deployment."""
         return self._enable_az
 
     @enable_az.setter
     def enable_az(self, x):
+        """Set this deployment as AZ-enabled or not."""
         self._enable_az = x
 
     @property
     def is_ready(self):
-        if not self.relation or self.min_units == 1:
+        """Units are clustered or not.
+        Which means min_units have been reached."""
+        if not self.relation and self.min_units == 1:
             return True
         if len(self.all_units(self.relation)) < self.min_units:
             return False
@@ -50,11 +57,13 @@ class KafkaBrokerCluster(KafkaRelationBase):
 
     def set_ssl_cert(self,
                      ssl_cert):
+        """Pass the unit certificate via relation."""
         if self.relation:
             if ssl_cert != self.relation.data[self.unit].get("cert", ""):
                 self.relation.data[self.unit]["cert"] = ssl_cert
 
     def get_all_certs(self):
+        """Capture all certificates from units."""
         crt_list = []
         for r in self.relations:
             for u in r.units:
@@ -64,10 +73,14 @@ class KafkaBrokerCluster(KafkaRelationBase):
 
     @property
     def truststore_pwd(self):
+        """Truststore used by this relation.
+        It stores the certificates of units shared in the relation."""
         return self.state.ts_pwd
 
     @property
     def truststore(self):
+        """Truststore used by this relation.
+        It stores the certificates of units shared in the relation."""
         return self.state.ts_path
 
     def _get_all_tls_certs(self):
