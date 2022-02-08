@@ -2,5 +2,6 @@ ops
 pyOpenSSL
 python-hosts==1.0.1
 git+https://github.com/canonical/ops-lib-nrpe#egg=ops-lib-nrpe
-git+https://opendev.org/openstack/charm-ops-interface-tls-certificates#egg=interface_tls_certificates
+# opendev.org causes CA server auth failure when building with charmcraft
+git+https://github.com/phvalguima/charm-ops-interface-tls-certificates#egg=interface_tls_certificates
 git+https://github.com/phvalguima/ops-coordinator#egg=ops-coordinator
