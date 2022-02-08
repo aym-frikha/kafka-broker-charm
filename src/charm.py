@@ -219,39 +219,39 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
                 self.listener.set_bootstrap_data(self.listener_info)
             return
         try:
-            restart_bool = event.restart(self.coordinator)
-        except SystemdError:
-            restart_bool = False
-        if restart_bool:
-            if self.check_ports_are_open(
-                    endpoints=self.ks.endpoints,
-                    retrials=3):
-                # Restart was successful, update need_restart and inform
-                # the clients via listener relation
-                self.model.unit.status = \
-                    ActiveStatus("service running")
-                # Restart was successful, if the charm is keeping track
-                # of a context, that is the place it should be updated
-                self.ks.config_state = event.ctx
-                # Toggle need_restart as we just did it.
-                self.ks.need_restart = False
-                logger.debug("EVENT DEBUG: restart event.restart() successful")
-                # Inform the clients on listener relation:
-                # self.coordinator.run_action()
-                if self.listener_info:
-                    logger.debug("Running bootstrap_data: {}".format(
-                        self.listener_info))
-                    self.listener.set_bootstrap_data(self.listener_info)
-
+            if event.restart(self.coordinator):
+                if self.check_ports_are_open(
+                        endpoints=self.ks.endpoints,
+                        retrials=3):
+                    # Restart was successful, update need_restart and inform
+                    # the clients via listener relation
+                    self.model.unit.status = \
+                        ActiveStatus("service running")
+                    # Restart was successful, if the charm is keeping track
+                    # of a context, that is the place it should be updated
+                    self.ks.config_state = event.ctx
+                    # Toggle need_restart as we just did it.
+                    self.ks.need_restart = False
+                    logger.debug("EVENT DEBUG: restart event.restart() successful")
+                    # Inform the clients on listener relation:
+                    # self.coordinator.run_action()
+                else:
+                    logger.warning("Failure at restart, operator should check")
+                    self.model.unit.status = \
+                        BlockedStatus("Restart Failed, check service")
             else:
-                logger.warning("Failure at restart, operator should check")
-                self.model.unit.status = \
-                    BlockedStatus("Restart Failed, check service")
-        else:
-            # defer the RestartEvent as it is still waiting for the
-            # lock to be released.
-            logger.debug("EVENT DEBUG: restart event.restart() failed, defer")
-            event.defer()
+                # defer the RestartEvent as it is still waiting for the
+                # lock to be released.
+                logger.debug("EVENT DEBUG: restart event.restart() failed, defer")
+                event.defer()
+        # Not using SystemdError as it is not exposed
+        except Exception as e:
+        # except SystemdError:
+            logger.warning("Restart failed, blocking unit: {}".format(e))
+            self.model.unit.status = \
+                BlockedStatus("Restart Failed, check service")
+            # Ignore the next restarts
+            self.ks.need_restart = False
 
     def on_certificates_relation_joined(self, event):
         # Relation just joined, request certs for each of the relations
@@ -530,7 +530,7 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         return self._get_ssl_cert(self.zk.binding_addr, "ssl-zk-cert", "ssl-zk-key")
 
     def get_zk_key(self):
-        return self._get_ssl_cert(self.zk.binding_addr, "ssl-zk-cert", "ssl-zk-key")
+        return self._get_ssl_key(self.zk.binding_addr, "ssl-zk-cert", "ssl-zk-key")
 
     def get_oauth_token_cert(self):
         # TODO: implement cert/key generation and
