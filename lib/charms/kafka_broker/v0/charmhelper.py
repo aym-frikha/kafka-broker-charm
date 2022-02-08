@@ -14,6 +14,7 @@ import pwd
 import grp
 import json
 import logging
+import ipaddress
 import subprocess
 
 logger = logging.getLogger(__name__)
@@ -32,6 +33,41 @@ __all__ = [
     "add_source",
     "GPGKeyError"
 ]
+
+
+def ns_query(address):
+    try:
+        import dns.resolver
+    except ImportError:
+        apt_install('python3-dnspython', fatal=True)
+        import dns.resolver
+
+    if isinstance(address, dns.name.Name):
+        rtype = 'PTR'
+    elif isinstance(address, str):
+        rtype = 'A'
+    else:
+        return None
+
+    try:
+        answers = dns.resolver.query(address, rtype)
+    except dns.resolver.NXDOMAIN:
+        return None
+
+    if answers:
+        return str(answers[0])
+    return None
+
+def is_ip(address):
+    """
+    Returns True if address is a valid IP address.
+    """
+    try:
+        # Test to see if already an IPv4/IPv6 address
+        address = ipaddress.ip_address(address)
+        return True
+    except (ValueError):
+        return False
 
 
 def get_hostname(address, fqdn=True):

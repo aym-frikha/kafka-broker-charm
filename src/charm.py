@@ -18,7 +18,8 @@ from ops.model import (
 from charms.operator_libs_linux.v1.systemd import (
     service_running,
     service_restart,
-    service_resume
+    service_resume,
+    SystemdError
 )
 
 from charms.kafka_broker.v0.kafka_base_class import (
@@ -217,7 +218,11 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
                     self.listener_info))
                 self.listener.set_bootstrap_data(self.listener_info)
             return
-        if event.restart(self.coordinator):
+        try:
+            restart_bool = event.restart(self.coordinator)
+        except SystemdError:
+            restart_bool = False
+        if restart_bool:
             if self.check_ports_are_open(
                     endpoints=self.ks.endpoints,
                     retrials=3):

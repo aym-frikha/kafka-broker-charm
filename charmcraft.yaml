@@ -9,7 +9,7 @@ bases:
 parts:
   charm:
 #    charm-python-packages: [pyOpenSSL, setuptools, pip]
-    charm-python-packages: [pip]
+    charm-python-packages: [pip, markupsafe]
     build-packages:
       - git
       # pyOpenSSL build packages
