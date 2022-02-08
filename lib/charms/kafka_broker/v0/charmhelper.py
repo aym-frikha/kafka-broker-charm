@@ -13,7 +13,10 @@ import os
 import pwd
 import grp
 import json
+import logging
 import subprocess
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "open_port",
@@ -107,7 +110,7 @@ def close_ports(start, end, protocol="TCP"):
 
 def _charmhelper_mkdir(path, owner='root', group='root', perms=0o555, force=False):
     """Create a directory"""
-    log("Making dir {} {}:{} {:o}".format(path, owner, group,
+    logger.info("Making dir {} {}:{} {:o}".format(path, owner, group,
                                         perms))
     uid = pwd.getpwnam(owner).pw_uid
     gid = grp.getgrnam(group).gr_gid
@@ -115,7 +118,7 @@ def _charmhelper_mkdir(path, owner='root', group='root', perms=0o555, force=Fals
     path_exists = os.path.exists(realpath)
     if path_exists and force:
         if not os.path.isdir(realpath):
-            log("Removing non-directory file {} prior to mkdir()".format(path))
+            logger.info("Removing non-directory file {} prior to mkdir()".format(path))
             os.unlink(realpath)
             os.makedirs(realpath, perms)
     elif not path_exists:
@@ -142,8 +145,7 @@ def _charmhelper_write_file(path, content, owner='root', group='root', perms=0o4
     except Exception:
         pass
     if content != existing_content:
-        log("Writing file {} {}:{} {:o}".format(path, owner, group, perms),
-            level=DEBUG)
+        logger.debug("Writing file {} {}:{} {:o}".format(path, owner, group, perms))
         with open(path, 'wb') as target:
             os.fchown(target.fileno(), uid, gid)
             os.fchmod(target.fileno(), perms)
@@ -154,16 +156,16 @@ def _charmhelper_write_file(path, content, owner='root', group='root', perms=0o4
     # the contents were the same, but we might still need to change the
     # ownership or permissions.
     if existing_uid != uid:
-        log("Changing uid on already existing content: {} -> {}"
-            .format(existing_uid, uid), level=DEBUG)
+        logger.debug("Changing uid on already existing content: {} -> {}"
+            .format(existing_uid, uid))
         os.chown(path, uid, -1)
     if existing_gid != gid:
-        log("Changing gid on already existing content: {} -> {}"
-            .format(existing_gid, gid), level=DEBUG)
+        logger.debug("Changing gid on already existing content: {} -> {}"
+            .format(existing_gid, gid))
         os.chown(path, -1, gid)
     if existing_perms != perms:
-        log("Changing permissions on existing content: {} -> {}"
-            .format(existing_perms, perms), level=DEBUG)
+        logger.debug("Changing permissions on existing content: {} -> {}"
+            .format(existing_perms, perms))
         os.chmod(path, perms)
 
 
@@ -295,7 +297,7 @@ def apt_install(packages, options=None, fatal=False, quiet=False):
     else:
         cmd.extend(packages)
     if not quiet:
-        log("Installing {} with options: {}"
+        logger.info("Installing {} with options: {}"
             .format(packages, options))
     return subprocess.check_output(cmd)
 
@@ -337,7 +339,7 @@ def mount(device, mountpoint, options=None, persist=False, filesystem="ext3"):
     try:
         subprocess.check_output(cmd_args)
     except subprocess.CalledProcessError as e:
-        log('Error mounting {} at {}\n{}'.format(device, mountpoint, e.output))
+        logger.info('Error mounting {} at {}\n{}'.format(device, mountpoint, e.output))
         return False
 
     if persist:
@@ -489,10 +491,10 @@ def import_key(key):
         # Send everything not obviously a keyid to GPG to import, as
         # we trust its validation better than our own. eg. handling
         # comments before the key.
-        log("PGP key found (looks like ASCII Armor format)", level=DEBUG)
+        logger.debug("PGP key found (looks like ASCII Armor format)")
         if ('-----BEGIN PGP PUBLIC KEY BLOCK-----' in key and
                 '-----END PGP PUBLIC KEY BLOCK-----' in key):
-            log("Writing provided PGP key in the binary format", level=DEBUG)
+            logger.debug("Writing provided PGP key in the binary format")
             key_bytes = key.encode('utf-8')
             key_name = _get_keyid_by_gpg_key(key_bytes)
             key_gpg = _dearmor_gpg_key(key_bytes)
@@ -500,9 +502,9 @@ def import_key(key):
         else:
             raise GPGKeyError("ASCII armor markers missing from GPG key")
     else:
-        log("PGP key found (looks like Radix64 format)", level=WARNING)
-        log("SECURELY importing PGP key from keyserver; "
-            "full key not provided.", level=WARNING)
+        logger.warning("PGP key found (looks like Radix64 format)")
+        logger.warning("SECURELY importing PGP key from keyserver; "
+                       "full key not provided.")
         # as of bionic add-apt-repository uses curl with an HTTPS keyserver URL
         # to retrieve GPG keys. `apt-key adv` command is deprecated as is
         # apt-key in general as noted in its manpage. See lp:1433761 for more

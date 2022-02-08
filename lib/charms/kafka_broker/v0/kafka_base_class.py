@@ -71,6 +71,8 @@ import socket
 import pwd
 import grp
 
+import cryptography.hazmat.primitives.serialization as serialization
+
 from charms.kafka_broker.v0.java_class import JavaCharmBase
 from charms.kafka_broker.v0.kafka_linux import (
     userAdd,
@@ -734,6 +736,85 @@ class KafkaJavaCharmBase(JavaCharmBase):
             self.config["mds_user"], self.config["mds_password"],
             mds_urls)
 
+    def _get_ssl_cert(self, cn=None, crt_config="ssl_cert", key_config="ssl_key"):
+        """Recovers the TLS certificate based either if the cert has been passed
+        as a configuration parameter (based on crt_config and key_config names)
+        or via relation on certificates.
+
+        Args:
+            cn: str, common name
+            crt_config: str, option name for the base64 config of the certificate
+            key_config: str, option name for the base64 config of the key
+        """
+        if cn==None:
+            return ""
+        if self.config["generate-root-ca"]:
+            return self.ks.ssl_cert
+        if len(self.config.get(crt_config)) > 0 and \
+           len(self.config.get(key_config)) > 0:
+            return base64.b64decode(self.config[crt_config]).decode("ascii")
+        # Not a config option, check the certificates relation
+        root_ca_chain = None
+        ca_cert = None
+        try:
+            root_ca_chain = self.certificates.root_ca_chain.public_bytes(
+                encoding=serialization.Encoding.PEM
+            )
+        except ca_client.CAClientError:
+            # A root ca chain is not always available. If configured to just
+            # use vault with self-signed certificates, you will not get a ca
+            # chain. Instead, you will get a CAClientError being raised. For
+            # now, use a bytes() object for the root_ca_chain as it shouldn't
+            # cause problems and if a ca_cert_chain comes later, then it will
+            # get updated.
+            root_ca_chain = bytes()
+        try:
+            ca_cert = (
+                self.certificates.ca_certificate.public_bytes(
+                    encoding=serialization.Encoding.PEM) +
+                root_ca_chain)
+        except ca_client.CAClientError:
+            ca_cert = bytes()
+        try:
+            certs = self.certificates._get_certs_and_keys(request_type='server')
+            c = certs[cn]["cert"].public_bytes(
+                    encoding=serialization.Encoding.PEM
+                ) + ca_cert
+            logger.debug("SSL Certificate chain"
+                         " from tls-certificates: {}".format(c))
+        except (ca_client.CAClientError):
+            # Certificates not ready yet, return empty
+            return ""
+        return c.decode("utf-8")
+
+    def _get_ssl_key(self, cn=None, crt_config="ssl_cert", key_config="ssl_key"):
+        """Recovers the TLS key based either if the cert has been passed
+        as a configuration parameter (based on crt_config and key_config names)
+        or via relation on certificates.
+
+        Args:
+            cn: str, common name
+            crt_config: str, option name for the base64 config of the certificate
+            key_config: str, option name for the base64 config of the key
+        """
+        if cn==None:
+            return ""
+        if self.config["generate-root-ca"]:
+            return self.ks.ssl_key
+        if len(self.config.get(crt_config)) > 0 and \
+           len(self.config.get(key_config)) > 0:
+            return base64.b64decode(self.config[key_config]).decode("ascii")
+        try:
+            certs = self.certificates._get_certs_and_keys(request_type='server')
+            k = certs[cn]["key"].private_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PrivateFormat.TraditionalOpenSSL,
+                encryption_algorithm=serialization.NoEncryption())
+        except (ca_client.CAClientError):
+            # Certificates not ready yet, return empty
+            return ""
+        return k.decode("utf-8")
+
     def _cert_relation_set(self, event, rel=None, extra_sans=[]):
         # Will introduce this CN format later
         def __get_cn():
@@ -743,7 +824,7 @@ class KafkaJavaCharmBase(JavaCharmBase):
         # or install events. In these cases, the goal is to run
         # the validation at the end of this method
         if rel:
-            if self.certificates.relation:
+            if self.certificates.is_joined:
                 sans = [
                     socket.gethostname(),
                     socket.getfqdn()
@@ -761,7 +842,7 @@ class KafkaJavaCharmBase(JavaCharmBase):
                 # Common name is always CN as this is the element
                 # that organizes the cert order from tls-certificates
                 self.certificates.request_server_certificate(
-                    cn=rel.binding_addr,
+                    common_name=rel.binding_addr,
                     sans=sans)
             logger.info("Either certificates "
                         "relation not ready or not set")

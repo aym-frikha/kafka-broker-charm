@@ -249,7 +249,6 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
             event.defer()
 
     def on_certificates_relation_joined(self, event):
-        self.certificates.on_tls_certificate_relation_joined(event)
         # Relation just joined, request certs for each of the relations
         # That will happen once. The certificates will be generated, then
         # it will trigger a -changed Event on certificates, which will
@@ -265,7 +264,6 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         self._on_config_changed(event)
 
     def on_certificates_relation_changed(self, event):
-        self.certificates.on_tls_certificate_relation_changed(event)
         self._on_config_changed(event)
 
     def on_listeners_relation_joined(self, event):
@@ -500,81 +498,6 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
 
     def _rel_get_remote_units(self, rel_name):
         return self.framework.model.get_relation(rel_name).units
-
-    def _get_ssl_cert(self, cn=None, crt_config="ssl_cert", key_config="ssl_key"):
-        """Recovers the TLS certificate based either if the cert has been passed
-        as a configuration parameter (based on crt_config and key_config names)
-        or via relation on certificates.
-
-        Args:
-            cn: str, common name
-            crt_config: str, option name for the base64 config of the certificate
-            key_config: str, option name for the base64 config of the key
-        """
-        if cn==None:
-            return ""
-        if self.config["generate-root-ca"]:
-            return self.ks.ssl_cert
-        if len(self.config.get(crt_config)) > 0 and \
-           len(self.config.get(key_config)) > 0:
-            return base64.b64decode(self.config[crt_config]).decode("ascii")
-        # Not a config option, check the certificates relation
-        root_ca_chain = None
-        ca_cert = None
-        try:
-            root_ca_chain = self.ca_client.root_ca_chain.public_bytes(
-                encoding=serialization.Encoding.PEM
-            )
-        except ca_client.CAClientError:
-            # A root ca chain is not always available. If configured to just
-            # use vault with self-signed certificates, you will not get a ca
-            # chain. Instead, you will get a CAClientError being raised. For
-            # now, use a bytes() object for the root_ca_chain as it shouldn't
-            # cause problems and if a ca_cert_chain comes later, then it will
-            # get updated.
-            root_ca_chain = bytes()
-        ca_cert = (
-            self.ca_client.ca_certificate.public_bytes(
-                encoding=serialization.Encoding.PEM) +
-            root_ca_chain)
-        try:
-            certs = self.certificates._get_certs_and_keys()
-            c = certs[cn]["cert"].public_bytes(
-                    encoding=serialization.Encoding.PEM
-                ) + ca_cert
-            logger.debug("SSL Certificate chain"
-                         " from tls-certificates: {}".format(c))
-        except (ca_client.CAClientError):
-            # Certificates not ready yet, return empty
-            return ""
-        return c.decode("utf-8")
-
-    def _get_ssl_key(self, cn=None, crt_config="ssl_cert", key_config="ssl_key"):
-        """Recovers the TLS key based either if the cert has been passed
-        as a configuration parameter (based on crt_config and key_config names)
-        or via relation on certificates.
-
-        Args:
-            cn: str, common name
-            crt_config: str, option name for the base64 config of the certificate
-            key_config: str, option name for the base64 config of the key
-        """
-        if cn==None:
-            return ""
-        if self.config["generate-root-ca"]:
-            return self.ks.ssl_key
-        if len(self.config.get(crt_config)) > 0 and \
-           len(self.config.get(key_config)) > 0:
-            return base64.b64decode(self.config[key_config]).decode("ascii")
-        try:
-            certs = self.certificates._get_certs_and_keys()
-            k = certs[cn]["key"].public_bytes(
-                    encoding=serialization.Encoding.PEM
-                )
-        except (ca_client.CAClientError):
-            # Certificates not ready yet, return empty
-            return ""
-        return k.decode("utf-8")
 
     def get_ssl_cert(self):
         return self._get_ssl_cert(self.listener.binding_addr)
