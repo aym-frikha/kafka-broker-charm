@@ -1,3 +1,5 @@
+"""Test the kafka_linux lib."""
+
 import os
 import unittest
 
@@ -23,12 +25,16 @@ FINALETCDHOSTS="""# This is a comment
 
 
 class TestContribLinux(unittest.TestCase):
+    """Unit test class."""
+
     maxDiff = None
 
     def setUp(self):
+        """Set up the unit test class."""
         super(TestContribLinux, self).setUp()
 
     def test_fix_maybe_hosts(self):
+        """Test the /etc/hosts fix."""
         def __cleanup():
             try:
                 os.remove("/tmp/3niofetchosts")

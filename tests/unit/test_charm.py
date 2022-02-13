@@ -1,6 +1,8 @@
 # Copyright 2021 pguimaraes
 # See LICENSE file for licensing details.
 
+"""Unit test for Kafka broker charm."""
+
 import os
 import unittest
 import shutil
@@ -50,6 +52,8 @@ TO_PATCH_HOST = [
 
 
 class MockEvent(object):
+    """Mock event."""
+
     def __init__(self, relations):
         self._relations = relations
 
@@ -115,6 +119,7 @@ class TestCharm(unittest.TestCase):
         for p in TO_PATCH_HOST:
             self._patch(charm, p)
 
+    @patch.object(charm, "daemon_reload")
     @patch.object(shutil, "chown")
     @patch.object(shutil, "which")
     @patch.object(os, "makedirs")
@@ -202,7 +207,8 @@ class TestCharm(unittest.TestCase):
                             mock_ops_coordinator,
                             mock_os_makedirs,
                             mock_shutil_which,
-                            mock_shutil_chown):
+                            mock_shutil_chown,
+                            mock_daemon_reload):
         """Test configuration changed with a cluster + 1x unit ZK.
         Use certificates passed via options and this is leader unit.
         Check each of the properties generated using mock_render.
@@ -331,6 +337,7 @@ class TestCharm(unittest.TestCase):
                 'zookeeper.ssl.truststore.password': 'confluentkeystorepass'}}
         )
 
+    @patch.object(charm, "daemon_reload")
     @patch.object(shutil, "chown")
     @patch.object(shutil, "which")
     @patch.object(os, "makedirs")
@@ -418,7 +425,8 @@ class TestCharm(unittest.TestCase):
                             mock_ops_coordinator,
                             mock_os_makedirs,
                             mock_shutil_which,
-                            mock_shutil_chown):
+                            mock_shutil_chown,
+                            mock_daemon_reload):
         """Test configuration changed with a cluster + 1x unit ZK.
         Use certificates passed via options and this is leader unit.
         Add listener relations with 2x applications but no SASL.

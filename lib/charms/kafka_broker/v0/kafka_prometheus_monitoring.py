@@ -90,6 +90,7 @@ class MyCharm(CharmBase):
 
 import os
 import yaml
+import json
 import uuid
 from ops.framework import EventBase, EventSource, StoredState, Object
 from ops.charm import CharmEvents
@@ -97,8 +98,7 @@ from ops.charm import CharmEvents
 
 def _implicit_peer_relation_name():
     md = None
-    os.environ.get('CHARM_DIR', '')
-    with open(os.path.join(charm_dir(), 'metadata.yaml')) as m:
+    with open(os.path.join(os.environ.get('CHARM_DIR', ''), 'metadata.yaml')) as m:
         md = yaml.safe_load(m)
     if 'peers' in md:
         return sorted(md['peers'].keys())[0]

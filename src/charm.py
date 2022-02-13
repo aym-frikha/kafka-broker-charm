@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 
-import base64
+"""A Juju machine charm for Kafka."""
+
 import logging
 import os
-import socket
 import yaml
 import json
-import cryptography.hazmat.primitives.serialization as serialization
+import hashlib
 
 from ops.main import main
 from ops.model import (
@@ -19,7 +19,7 @@ from charms.operator_libs_linux.v1.systemd import (
     service_running,
     service_restart,
     service_resume,
-    SystemdError
+    daemon_reload
 )
 
 from charms.kafka_broker.v0.kafka_base_class import (
@@ -83,21 +83,27 @@ CONFLUENT_PACKAGES = [
 
 
 class KafkaBrokerCharmMDSNotSupportedError(Exception):
+    """Exception raised when MDS relation is but distro is not confluent."""
 
     def __init__(self, distro):
+        """Return error message for mds not supported."""
         message = "MDS is not supported on " + \
                   "{} distribution, only Confluent".format(distro)
         super().__init__(message)
 
 
 class KafkaBrokerCharm(KafkaJavaCharmBase):
+    """Implements the Kafka machine charm."""
+
     on = RestartCharmEvent()
 
     def _install_tarball(self):
+        """Deploy Kafka from a tarball resource."""
         # Use _generate_service_files here
         raise Exception("Not Implemented Yet")
 
     def __init__(self, *args):
+        """Initialize kafka charm."""
         super().__init__(*args)
         self.certificates = ca_client.CAClient(
             self,
@@ -169,22 +175,17 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         self.listener_info = None
 
     def __del__(self):
+        """Ensure coordinator will release any locks."""
         self.coordinator.release()
 
     def is_jmxexporter_enabled(self):
+        """Check if prometheus relation exists."""
         if self.prometheus.relations:
             return True
         return False
 
-    @property
-    def ctx(self):
-        return json.loads(self.ks.config_state)
-
-    @ctx.setter
-    def ctx(self, c):
-        self.ks.ctx = json.dumps(c)
-
     def on_upload_keytab_action(self, event):
+        """Implement the keytab action upload."""
         try:
             self._upload_keytab_base64(
                 event.params["keytab"], filename="kafka_broker.keytab")
@@ -196,7 +197,7 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         event.set_results({"keytab": "Uploaded!"})
 
     def on_restart_event(self, event):
-        logger.debug("EVENT DEBUG: on_restart_event called")
+        """Run the restart logic."""
         if not self.ks.need_restart:
             # There is a chance of several restart events being stacked.
             # This check ensures a single restart happens if several
@@ -211,8 +212,6 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
             # requests for this unit anymore).
             # We can drop any other restart events that were stacked and
             # waiting for processing.
-            logger.debug("EVENT DEBUG: restart event abandoned,"
-                         " need_restart is unset")
             if self.listener_info:
                 logger.debug("Running bootstrap_data: {}".format(
                     self.listener_info))
@@ -227,14 +226,8 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
                     # the clients via listener relation
                     self.model.unit.status = \
                         ActiveStatus("service running")
-                    # Restart was successful, if the charm is keeping track
-                    # of a context, that is the place it should be updated
-                    self.ks.config_state = event.ctx
                     # Toggle need_restart as we just did it.
                     self.ks.need_restart = False
-                    logger.debug("EVENT DEBUG: restart event.restart() successful")
-                    # Inform the clients on listener relation:
-                    # self.coordinator.run_action()
                 else:
                     logger.warning("Failure at restart, operator should check")
                     self.model.unit.status = \
@@ -242,11 +235,10 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
             else:
                 # defer the RestartEvent as it is still waiting for the
                 # lock to be released.
-                logger.debug("EVENT DEBUG: restart event.restart() failed, defer")
                 event.defer()
         # Not using SystemdError as it is not exposed
         except Exception as e:
-        # except SystemdError:
+            # except SystemdError:
             logger.warning("Restart failed, blocking unit: {}".format(e))
             self.model.unit.status = \
                 BlockedStatus("Restart Failed, check service")
@@ -254,6 +246,7 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
             self.ks.need_restart = False
 
     def on_certificates_relation_joined(self, event):
+        """Request the certificates needed for this unit."""
         # Relation just joined, request certs for each of the relations
         # That will happen once. The certificates will be generated, then
         # it will trigger a -changed Event on certificates, which will
@@ -269,13 +262,16 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         self._on_config_changed(event)
 
     def on_certificates_relation_changed(self, event):
+        """Check if the certificates are ready and update configs."""
         self._on_config_changed(event)
 
     def on_listeners_relation_joined(self, event):
+        """Execute listener logic."""
         self.listener.on_listener_relation_joined(event)
         self._on_config_changed(event)
 
     def on_listeners_relation_changed(self, event):
+        """Execute listener logic."""
         try:
             self.listener.on_listener_relation_changed(event)
         except KafkaRelationBaseTLSNotSetError:
@@ -292,27 +288,31 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         self._on_config_changed(event)
 
     def on_mds_relation_joined(self, event):
+        """Add the MDS relation for confluent kafka."""
         # TODO: Implement
         return
 
     def on_mds_relation_changed(self, event):
+        """Add the MDS relation for confluent kafka."""
         # TODO: Implement
         return
 
     def on_update_status(self, event):
+        """Update the status of the charm according to service status."""
         # Check if the locks must be handled or not
         # coordinator = OpsCoordinator()
         # coordinator.handle_locks(self.unit)
         super().on_update_status(event)
 
     def _on_cluster_relation_joined(self, event):
+        """Call cluster class for -joined event."""
         self.cluster.user = self.config.get("user", "")
         self.cluster.group = self.config.get("group", "")
         self.cluster.mode = 0o640
         try:
             self.cluster.on_cluster_relation_joined(event)
         except KafkaRelationBaseNotUsedError as e:
-            # Relation not been used any other application, move on
+            # Relation not been used by any other application, move on
             logger.info(str(e))
         except KafkaRelationBaseTLSNotSetError as e:
             event.defer()
@@ -320,31 +320,34 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         self._on_config_changed(event)
 
     def _on_cluster_relation_changed(self, event):
+        """Call cluster class for -changed event."""
         self.cluster.user = self.config.get("user", "")
         self.cluster.group = self.config.get("group", "")
         self.cluster.mode = 0o640
         try:
             self.cluster.on_cluster_relation_changed(event)
         except KafkaRelationBaseNotUsedError as e:
-            # Relation not been used any other application, move on
+            # Relation not been used by any other application, move on
             logger.info(str(e))
         except KafkaRelationBaseTLSNotSetError as e:
             event.defer()
             self.model.unit.status = BlockedStatus(str(e))
         self._on_config_changed(event)
+        # Inform prometheus there are new units to monitor
         if not self.prometheus.relations:
             return
         if len(self.prometheus.relations) > 0:
             self.prometheus.on_prometheus_relation_changed(event)
 
     def _on_zookeeper_relation_joined(self, event):
+        """Call zk class for -joined event."""
         self.zk.user = self.config.get("user", "")
         self.zk.group = self.config.get("group", "")
         self.zk.mode = 0o640
         try:
             self.zk.on_zookeeper_relation_joined(event)
         except KafkaRelationBaseNotUsedError as e:
-            # Relation not been used any other application, move on
+            # Relation not been used by any other application, move on
             logger.info(str(e))
         except KafkaRelationBaseTLSNotSetError as e:
             event.defer()
@@ -352,13 +355,14 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         self._on_config_changed(event)
 
     def _on_zookeeper_relation_changed(self, event):
+        """Call zk class for -changed event."""
         self.zk.user = self.config.get("user", "")
         self.zk.group = self.config.get("group", "")
         self.zk.mode = 0o640
         try:
             self.zk.on_zookeeper_relation_changed(event)
         except KafkaRelationBaseNotUsedError as e:
-            # Relation not been used any other application, move on
+            # Relation not been used by any other application, move on
             logger.info(str(e))
         except KafkaRelationBaseTLSNotSetError as e:
             event.defer()
@@ -377,10 +381,14 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
             # Otherwise, charm is running then issue a restart event.
             self.ks.need_restart = True
             # Issue a restart event with current context.
-            self.on.restart_event.emit(self.ctx, services=self.services)
+            self.on.restart_event.emit(
+                self.ks.config_state, services=self.services)
         self._on_config_changed(event)
 
     def _generate_keystores(self):
+        """Generate the keystores for SSL and zookeeper relations."""
+        # TODO: move to kafka base class
+
         # If we will auto-generate the root ca
         # and at least one of the certs or keys is not yet set,
         # then we can proceed and regenerate it.
@@ -451,17 +459,26 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
                                   "regenerate-keystore-truststore", False))
 
     def _on_install(self, event):
+        """Run the installation process.
+
+        There are several options for installation, depending on distro.
+        """
         self.model.unit.status = MaintenanceStatus("Installing packages...")
         super()._on_install(event)
         packages = []
         if self.config.get("install_method") == "archive":
+            # TODO: implement the tarball installation
             self._install_tarball()
         elif self.distro == "confluent" or self.distro == "apache":
+            # Both confluent and apache install via packages.
             if self.distro == "confluent":
                 packages = CONFLUENT_PACKAGES + ['libsystemd-dev']
             else:
+                # TODO: implement apache / package installation
                 raise Exception("Not Implemented Yet")
         elif self.distro == "apache_snap":
+            # Install via snaps, either the resource attached to the charm
+            # or from snapstore.
             # Override prometheus jar file
             self.JMX_EXPORTER_JAR_FOLDER = \
                 "/snap/kafka/current/jar/"
@@ -477,6 +494,7 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         data_log_dir = \
             list(yaml.safe_load(
                      self.config.get("data-log-dir", "")).items())[0][1]
+        # Create the log folders.
         self.create_log_dir(self.config["data-log-device"],
                             data_log_dir,
                             data_log_fs,
@@ -488,6 +506,13 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         self._on_config_changed(event)
 
     def _check_if_ready_to_start(self, ctx):
+        """Check if restart event is necessary.
+
+        If the cluster is not yet ready, return waiting on other units.
+        Then, check if the context passed via argument is the same as the last
+        context hash seen. If yes, it means there was no relevant configuration
+        change that justifies a restart.
+        """
         if not self.cluster.is_ready:
             self.model.unit.status = \
                 BlockedStatus("Waiting for other cluster units")
@@ -501,43 +526,52 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
             return False
         return True
 
-    def _rel_get_remote_units(self, rel_name):
-        return self.framework.model.get_relation(rel_name).units
-
     def get_ssl_cert(self):
+        """Get the certificate from the option or relation."""
         return self._get_ssl_cert(self.listener.binding_addr)
 
     def get_ssl_key(self):
+        """Get the key from the option or relation."""
         return self._get_ssl_key(self.listener.binding_addr)
 
     def get_ssl_keystore(self):
+        """Get the keystore."""
         path = self.config.get("keystore-path", "")
         return path
 
     def get_ssl_truststore(self):
+        """Get the truststore."""
         path = self.config.get("truststore-path", "")
         return path
 
     def get_zk_keystore(self):
+        """Get the keystore."""
         path = self.config.get("keystore-zookeeper-path", "")
         return path
 
     def get_zk_truststore(self):
+        """Get the truststore."""
         path = self.config.get("truststore-zookeeper-path", "")
         return path
 
     def get_zk_cert(self):
-        return self._get_ssl_cert(self.zk.binding_addr, "ssl-zk-cert", "ssl-zk-key")
+        """Get the certificate from the option or relation."""
+        return self._get_ssl_cert(
+                   self.zk.binding_addr, "ssl-zk-cert", "ssl-zk-key")
 
     def get_zk_key(self):
-        return self._get_ssl_key(self.zk.binding_addr, "ssl-zk-cert", "ssl-zk-key")
+        """Get the key from the option or relation."""
+        return self._get_ssl_key(
+                   self.zk.binding_addr, "ssl-zk-cert", "ssl-zk-key")
 
     def get_oauth_token_cert(self):
+        """Get OAUTH token certificate."""
         # TODO: implement cert/key generation and
         # management through this getters
         raise Exception("Not Implemented Yet")
 
     def get_oauth_token_key(self):
+        """Get OAUTH token key."""
         # TODO: implement cert/key generation and
         # management through this getters
         raise Exception("Not Implemented Yet")
@@ -958,6 +992,7 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         return client_props
 
     def _get_service_name(self):
+        """Return the service name based on the distro selected."""
         if self.distro == "confluent":
             self.service = "confluent-server"
         elif self.distro == "apache_snap":
@@ -967,6 +1002,7 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         return self.service
 
     def _render_jaas_conf(self, jaas_path="/etc/kafka/jaas.conf"):
+        """Get the JAAS config for authentication."""
         content = ""
         jaas_file = self.config["filepath-jaas-conf"]
         if self.is_sasl_kerberos_enabled():
@@ -1019,7 +1055,7 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         return root_logger
 
     def _on_config_changed(self, event):
-        """CONFIG CHANGE
+        """Do the configuration change.
 
         1) Check if kerberos and ZK is available
         2) Generate the Keystores
@@ -1049,7 +1085,7 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
             self.model.unit.status = \
                 BlockedStatus("Kerberos config missing: {}".format(str(e)))
             return
-        ctx = super()._on_config_changed(event)
+        parent_config = super()._on_config_changed(event)
         if not self.zk.relation:
             # It does not make sense to progress until zookeeper is set
             self.model.unit.status = \
@@ -1067,7 +1103,7 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
 
         # 4) Generate the config files
         try:
-            ctx["server_opts"] = self._generate_server_properties(event)
+            server_opts = self._generate_server_properties(event)
         except KafkaRelationBaseNotUsedError:
             self.model.unit.status = \
                 BlockedStatus("Relation not ready yet")
@@ -1077,21 +1113,42 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
             return
         self.model.unit.status = \
             MaintenanceStatus("Render client properties")
-        ctx["client_opts"] = self._generate_client_properties()
+        client_opts = self._generate_client_properties()
         self.model.unit.status = \
             MaintenanceStatus("Render service override.conf")
         if self.distro == "apache_snap":
-            ctx["svc_opts"] = self.render_service_override_file(
+            svc_opts = self.render_service_override_file(
                 target="/etc/systemd/system/"
                        "{}.service.d/override.conf".format(self.service),
                 jmx_jar_folder="/snap/kafka/current/jar/",
                 jmx_file_name="/var/snap/kafka/common/prometheus.yaml")
         else:
-            ctx["svc_opts"] = self.render_service_override_file(
+            svc_opts = self.render_service_override_file(
                 target="/etc/systemd/system/"
                        "{}.service.d/override.conf".format(self.service))
-        ctx["keytab_opts"] = self.keytab_b64
-        ctx["log4j_config"] = self._render_kafka_log4j_properties()
+        # Reload service
+        daemon_reload()
+
+        log4j_opts = self._render_kafka_log4j_properties()
+
+        ctx = hashlib.md5(json.dumps({
+            "init_config": parent_config,
+            "server_opts": server_opts,
+            "log4j_opts": log4j_opts,
+            "svc_opts": svc_opts,
+            "client_opts": client_opts,
+            "keytab_opts": self.keytab_b64,
+            "certificates": {
+                "ssl_crt": self.get_ssl_cert(),
+                "ssl_key": self.get_ssl_key(),
+                "ssl_ks": self.get_ssl_keystore(),
+                "ssl_ts": self.get_ssl_truststore(),
+                "zk_crt": self.get_zk_cert(),
+                "zk_key": self.get_zk_key(),
+                "zk_ks": self.get_zk_keystore(),
+                "zk_ts": self.get_zk_truststore(),
+            }
+        }).encode('utf-8')).hexdigest()
 
         # 5) Restart Strategy
         # Now, service is operational. Restart service with an event to
@@ -1099,7 +1156,7 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         self.model.unit.status = \
             MaintenanceStatus("Building context...")
         logger.debug("Context: {}, saved state is: {}".format(
-            ctx, self.ctx))
+            ctx, self.ks.config_state))
 
         if self._check_if_ready_to_start(ctx):
             self.on.restart_event.emit(ctx, services=self.services)
@@ -1113,6 +1170,7 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
             self.model.unit.status = \
                 BlockedStatus("Service not running that "
                               "should be: {}".format(self.services))
+        self.ks.config_state = ctx
 
 
 if __name__ == "__main__":

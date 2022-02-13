@@ -10,6 +10,8 @@
 #  License for the specific language governing permissions and limitations
 #  under the License.
 
+"""Test the Kafka Base class."""
+
 import socket
 import builtins
 import unittest
@@ -18,21 +20,18 @@ import os
 import shutil
 from mock import patch, mock_open
 
-import charm as charm
-
 from ops.testing import Harness
+from charms.kafka_broker.v0.kafka_linux import getCurrentUserAndGroup
 
 import charms.kafka_broker.v0.kafka_base_class as kafka
 import charms.kafka_broker.v0.java_class as java
-from charms.kafka_broker.v0.kafka_linux import getCurrentUserAndGroup
-
 
 # Set logger to the module to be mocked
 logger = logging.getLogger("charms.kafka_broker.v0.kafka_base_class")
 
+
 OVERRIDE_CONF = """
 [Service]
-
 User=test
 
 Group=test
@@ -49,7 +48,6 @@ LOG_DIR: '/var/log/kafka'""" # noqa
 
 KERBEROS_OVERRIDE_CONF = """
 [Service]
-
 User=test
 
 Group=test
@@ -101,11 +99,53 @@ KRB5_CONF = """[libdefaults]
  .example.com = EXAMPLE.COM
   example.com = EXAMPLE.COM""" # noqa
 
+CONFIG_YAML = """options:
+  user:
+    type: string
+    default: "root"
+  group:
+    type: string
+    default: "root"
+  sasl-protocol:
+    type: string
+    default: ""
+  kerberos-kdc-hostname:
+    type: string
+    default: ""
+  kerberos-admin-hostname:
+    type: string
+    default: ""
+  kerberos-protocol:
+    type: string
+    default: ""
+  kerberos-domain:
+    type: string
+    default: ""
+  kerberos-realm:
+    type: string
+    default: ""
+  kerberos-principal:
+    type: string
+    default: ""
+  service-unit-overrides:
+    type: string
+    default: ""
+  service-overrides:
+    type: string
+    default: ""
+  service-environment-overrides:
+    type: string
+    default: ""
+""" # noqa
+
 
 class TestAppKafka(unittest.TestCase):
+    """Unit test class."""
+
     maxDiff = None
 
     def _simulate_render(self, ctx=None, templ_file=""):
+        """Mock render method and returns the rendered text."""
         import jinja2
         env = jinja2.Environment(loader=jinja2.FileSystemLoader('templates'))
         templ = env.get_template(templ_file)
@@ -113,6 +153,7 @@ class TestAppKafka(unittest.TestCase):
         return doc
 
     def setUp(self):
+        """Set up the unit test class."""
         super(TestAppKafka, self).setUp()
         os.environ["JUJU_CHARM_DIR"] = "./"
 
@@ -123,6 +164,7 @@ class TestAppKafka(unittest.TestCase):
                             mock_mkdir,
                             mock_chown,
                             mock_warning):
+        """Test the creation of log dirs for kafka."""
         harness = Harness(kafka.KafkaJavaCharmBase)
         self.addCleanup(harness.cleanup)
         harness.begin()
@@ -148,15 +190,11 @@ class TestAppKafka(unittest.TestCase):
                               mock_set_file_perms,
                               mock_subprocess_check,
                               mock_os_makedirs):
-
-        harness = Harness(kafka.KafkaJavaCharmBase)
-#        harness = Harness(charm.KafkaBrokerCharm)
+        """Test the package installation."""
+        harness = Harness(
+            kafka.KafkaJavaCharmBase, config=CONFIG_YAML)
         self.addCleanup(harness.cleanup)
         harness.begin()
-        #harness._update_config({
-        #    "distro": "confluent",
-        #    "version": "6.1"
-        #})
         k = harness.charm
         k.install_packages("openjdk-11-headless", ["test"])
         self.assertIn(
@@ -179,7 +217,9 @@ class TestAppKafka(unittest.TestCase):
                                       mock_mkdir,
                                       mock_chown,
                                       mock_warning):
-        harness = Harness(kafka.KafkaJavaCharmBase)
+        """Test the creation of data and log dirs."""
+        harness = Harness(
+            kafka.KafkaJavaCharmBase, config=CONFIG_YAML)
         self.addCleanup(harness.cleanup)
         harness.begin()
         k = harness.charm
@@ -192,9 +232,9 @@ class TestAppKafka(unittest.TestCase):
             data_fs=None)
         mock_warning.assert_called()
 
-"""
     @patch("os.makedirs")
     @patch.object(kafka.KafkaJavaCharmBase, "set_folders_and_permissions")
+    @patch.object(kafka, "render_from_string")
     @patch.object(kafka, "render")
     @patch.object(kafka.KafkaJavaCharmBase, "is_sasl_kerberos_enabled")
     @patch.object(kafka.KafkaJavaCharmBase, "is_ssl_enabled")
@@ -202,8 +242,10 @@ class TestAppKafka(unittest.TestCase):
                                   mock_ssl_enabled,
                                   mock_krbs,
                                   mock_render,
+                                  mock_render_string,
                                   mock_set_folder_perms,
                                   mock_os_makedirs):
+        """Test the render override method for systemd."""
         def __cleanup():
             try:
                 os.remove("/tmp/13fnutest/13fnutest.service")
@@ -213,9 +255,11 @@ class TestAppKafka(unittest.TestCase):
 
         __cleanup()
         mock_render.return_value = ""
+        mock_render_string.return_value = ""
         mock_ssl_enabled.return_value = False
         mock_krbs.return_value = False
-        harness = Harness(kafka.KafkaJavaCharmBase)
+        harness = Harness(
+            kafka.KafkaJavaCharmBase, config=CONFIG_YAML)
         self.addCleanup(harness.cleanup)
         harness.begin()
         k = harness.charm
@@ -232,9 +276,9 @@ class TestAppKafka(unittest.TestCase):
         })
         k.render_service_override_file(
             target="/tmp/13fnutest/13fnutest.service")
-        mock_render.assert_called()
+        mock_render_string.assert_called()
         rendered = self._simulate_render(
-            ctx=mock_render.call_args.kwargs["context"],
+            ctx=mock_render_string.call_args.kwargs["context"],
             templ_file="kafka_override.conf.j2")
         self.assertEqual(OVERRIDE_CONF, rendered)
         __cleanup()
@@ -243,15 +287,18 @@ class TestAppKafka(unittest.TestCase):
     @patch.object(kafka.KafkaJavaCharmBase, "_render_krb5_conf")
     @patch.object(socket, "gethostname")
     @patch.object(kafka.KafkaJavaCharmBase, "set_folders_and_permissions")
+    @patch.object(kafka, "render_from_string")
     @patch.object(kafka, "render")
     @patch.object(kafka.KafkaJavaCharmBase, "is_ssl_enabled")
     def test_kerberos_svc_config(self,
                                  mock_ssl_enabled,
                                  mock_render,
+                                 mock_render_string,
                                  mock_set_folder_perms,
                                  mock_gethostname,
                                  mock_render_krb5_conf,
                                  mock_os_makedirs):
+        """Test the kerberos service configuration."""
         def __cleanup():
             try:
                 os.remove("/tmp/rnoetest/rnoetest.service")
@@ -262,8 +309,10 @@ class TestAppKafka(unittest.TestCase):
         __cleanup()
         mock_gethostname.return_value = "test"
         mock_render.return_value = ""
+        mock_render_string.return_value = ""
         mock_ssl_enabled.return_value = True
-        harness = Harness(kafka.KafkaJavaCharmBase)
+        harness = Harness(
+            kafka.KafkaJavaCharmBase, config=CONFIG_YAML)
         self.addCleanup(harness.cleanup)
         harness.begin()
         k = harness.charm
@@ -287,14 +336,13 @@ class TestAppKafka(unittest.TestCase):
         # Testing render service files
         k.render_service_override_file(
             target="/tmp/rnoetest.service/rnoetest.service")
-        mock_render.assert_called()
+        mock_render_string.assert_called()
         # Render the file for comparison
         rendered = self._simulate_render(
-            ctx=mock_render.call_args.kwargs["context"],
+            ctx=mock_render_string.call_args.kwargs["context"],
             templ_file="kafka_override.conf.j2")
         self.assertEqual(KERBEROS_OVERRIDE_CONF, rendered)
         __cleanup()
-
 
     @patch("os.makedirs")
     @patch.object(kafka.KafkaJavaCharmBase, "_render_krb5_conf")
@@ -307,9 +355,11 @@ class TestAppKafka(unittest.TestCase):
                                   mock_gethostname,
                                   mock_render_krb5_conf,
                                   mock_os_makedirs):
+        """Test the jaas config for kerberos."""
         mock_gethostname.return_value = "test"
         mock_set_files_perms.return_value = None
-        harness = Harness(kafka.KafkaJavaCharmBase)
+        harness = Harness(
+            kafka.KafkaJavaCharmBase, config=CONFIG_YAML)
         self.addCleanup(harness.cleanup)
         harness.begin()
         k = harness.charm
@@ -339,7 +389,10 @@ class TestAppKafka(unittest.TestCase):
             handle = m_open()
             handle.write.assert_called_once_with(KERBEROS_JAAS_CONF)
 
+    @patch("pwd.getpwnam")
+    @patch("grp.getgrnam")
     @patch("os.makedirs")
+    @patch.object(kafka, "render_from_string")
     @patch.object(kafka, "render")
     @patch.object(socket, "gethostname")
     @patch.object(kafka, "setFilePermissions")
@@ -349,10 +402,15 @@ class TestAppKafka(unittest.TestCase):
                                   mock_set_files_perms,
                                   mock_gethostname,
                                   mock_render,
-                                  mock_os_makedirs):
+                                  mock_render_string,
+                                  mock_os_makedirs,
+                                  mock_grp_getgrnam,
+                                  mock_pwd_getpwnam):
+        """Test the krb5.conf rendering."""
         mock_gethostname.return_value = "test"
         mock_set_files_perms.return_value = None
-        harness = Harness(kafka.KafkaJavaCharmBase)
+        harness = Harness(
+            kafka.KafkaJavaCharmBase, config=CONFIG_YAML)
         self.addCleanup(harness.cleanup)
         harness.begin()
         k = harness.charm
@@ -375,10 +433,9 @@ class TestAppKafka(unittest.TestCase):
             "service-environment-overrides": SVC_ENV_OVERRIDE,
         })
         k._render_krb5_conf()
-        mock_render.assert_called()
+        mock_render_string.assert_called()
         # Render the file for comparison
         rendered = self._simulate_render(
-            ctx=mock_render.call_args.kwargs["context"],
+            ctx=mock_render_string.call_args.kwargs["context"],
             templ_file="krb5.conf.j2")
         self.assertEqual(KRB5_CONF, rendered)
-"""

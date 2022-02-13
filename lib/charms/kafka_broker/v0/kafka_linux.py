@@ -157,7 +157,7 @@ def set_folders_and_permissions(folders, user, group, mode=0o750):
 # That forces inter-cluster to open only to localhost interface
 # if server.X=<server-name>
 # To resolve that, any entries for hostnames parameter will be removed
-# and readded with the correct IP address.
+# and read with the correct IP address.
 def fixMaybeLocalhost(hosts_path="/etc/hosts",
                       hostname=None,
                       IP=None):

@@ -1,3 +1,5 @@
+"""Unit Test for Kafka Listener Relation class."""
+
 import unittest
 import json
 
@@ -13,21 +15,28 @@ from charms.kafka_broker.v0.kafka_listener import (
 
 # Helper classes to allow mocking of some
 # operator-specific objects
-class model:
+class Model:
+    """Mock the model."""
+
     def __init__(self, app):
+        """Init mock with app name."""
         self._app = app
 
     @property
     def app(self):
+        """Return app name."""
         return self._app
 
 
-class relation:
+class Relation:
+    """Mock relation."""
+
     def __init__(self, data, app):
+        """Create the mock relation."""
         self._app = app
-        self._units = [unit(False, self._app),
-                       unit(True, self._app),
-                       unit(False, self._app)]
+        self._units = [Unit(False, self._app),
+                       Unit(True, self._app),
+                       Unit(False, self._app)]
         j = json.dumps(data)
         self._data = {
             self._app: {"request": j},
@@ -38,52 +47,71 @@ class relation:
 
     @property
     def app(self):
+        """Return the app name of the relation."""
         return self._app
 
     @property
     def data(self):
+        """Return the data in the relation."""
         return self._data
 
     @property
     def units(self):
+        """Return the unit list in the relation."""
         return self._units
 
 
-class event:
+class Event:
+    """Mock event."""
+
     def __init__(self, relation):
+        """Create the mock event."""
         self._relation = relation
 
     @property
     def relation(self):
+        """Return the relation linked to the event."""
         return self._relation
 
 
-class app:
+class App:
+    """Mock app."""
+
     def __init__(self, app):
+        """Create the mock app."""
         self._app = app
 
     @property
     def name(self):
+        """Return the app name."""
         return self._app
 
 
-class unit:
+class Unit:
+    """Mock unit."""
+
     def __init__(self, is_leader=False, app_name=""):
+        """Create the mock unit."""
         self._is_leader = is_leader
         self._name = app_name
 
     def is_leader(self):
+        """Return if mock is set as leader."""
         return self._is_leader
 
     @property
     def app(self):
-        return app(self._name)
+        """Return the mock app for the unit."""
+        return App(self._name)
 
 
 class KafkaListenerRelationTest(unittest.TestCase):
+    """Class that implements the unit tests for the kafka listener."""
+
     maxDiff = None
 
     def setUp(self):
+        """Set up the kafka listener unittest."""
         super(KafkaListenerRelationTest, self).setUp()
 
     @patch.object(KafkaListenerProvidesRelation, "ts_pwd",
@@ -106,19 +134,20 @@ class KafkaListenerRelationTest(unittest.TestCase):
                            mock_port,
                            mock_ts_path,
                            mock_ts_pwd):
+        """Test getting the listeners via relation."""
         # __init__ must return None
         mock_init.return_value = None
-        mock_unit.return_value = unit(True)
+        mock_unit.return_value = Unit(True)
         mock_port.return_value = 9092
         mock_ts_path.return_value = "test"
         mock_ts_pwd.return_value = "test"
-        mock_relations.return_value = [relation({
+        mock_relations.return_value = [Relation({
             "is_public": False,
             "plaintext_pwd": "",
             "secprot": "PLAINTEXT",
             "SASL": {},
             "cert": ""
-        }, app=app("test")), relation({
+        }, app=App("test")), Relation({
             "is_public": True,
             "plaintext_pwd": "",
             "secprot": "SASL_SSL",
@@ -128,7 +157,7 @@ class KafkaListenerRelationTest(unittest.TestCase):
                 "kerberos-protocol": "http"
             },
             "cert": ""
-        }, app=app("connect"))]
+        }, app=App("connect"))]
         obj = KafkaListenerProvidesRelation(None, "listener")
         # Given the __init__ has been replaced with a mock object, manually
         # set the port value:

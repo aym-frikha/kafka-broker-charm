@@ -122,6 +122,18 @@ from charms.kafka_broker.v0.charmhelper import (
 
 logger = logging.getLogger(__name__)
 
+__all__ = [
+    'KafkaJavaCharmBase',
+    'KafkaJavaCharmBaseNRPEMonitoring',
+    'KafkaJavaCharmBasePrometheusMonitorNode',
+    'KafkaCharmBaseConfigNotAcceptedError',
+    'KafkaCharmBaseMissingConfigError',
+    'KafkaCharmBaseFeatureNotImplementedError',
+    'OVERRIDE_CONF',
+    'KRB5_CONF'
+]
+
+
 # To avoid having to add this template to each charm, generate from a
 # string instead.
 OVERRIDE_CONF = """{% if service_unit_overrides %}
@@ -170,15 +182,6 @@ KRB5_CONF = """[libdefaults]
 [domain_realm]
  .{{ realm|lower() }} = {{ realm|upper() }}
   {{ realm|lower() }} = {{ realm|upper() }}""" # noqa
-
-__all__ = [
-    'KafkaJavaCharmBase',
-    'KafkaJavaCharmBaseNRPEMonitoring',
-    'KafkaJavaCharmBasePrometheusMonitorNode',
-    'KafkaCharmBaseConfigNotAcceptedError',
-    'KafkaCharmBaseMissingConfigError',
-    'KafkaCharmBaseFeatureNotImplementedError'
-]
 
 
 class KafkaJavaCharmBasePrometheusMonitorNode(BasePrometheusMonitor):
@@ -281,7 +284,7 @@ class KafkaJavaCharmBaseNRPEMonitoring(Object):
 
     def __init__(self, charm, svcs=[], endpoints=[],
                  nrpe_relation_name='nrpe-external-master'):
-        """Intialize with the list of services and ports to be monitored.
+        """Initialize with the list of services and ports to be monitored.
 
         Args:
             svcs: list -> list of service names to be monitored by NRPE

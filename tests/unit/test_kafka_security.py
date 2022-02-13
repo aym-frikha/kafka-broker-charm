@@ -10,6 +10,8 @@
 #  License for the specific language governing permissions and limitations
 #  under the License.
 
+"""Unit Test for kafka_security."""
+
 import os
 import unittest
 # from mock import patch
@@ -26,14 +28,18 @@ import charms.kafka_broker.v0.kafka_security as security
 
 
 class TestSecurity(unittest.TestCase):
+    """Unit test class."""
 
     def setUp(self):
+        """Set up the test scenario."""
         super(TestSecurity, self).setUp()
 
     def test_break_crt_chain(self):
+        """Test separate the cert chain into unique certificates."""
         self.assertEqual(2, len(security._break_crt_chain(UBUNTU_COM_CERT)))
 
     def test_gen_self_signed(self):
+        """Test cert generation."""
         security.generateSelfSigned("/tmp", "testcert")
         self.assertEqual(True,
                          security._check_file_exists("/tmp/testcert.crt"))
@@ -43,6 +49,8 @@ class TestSecurity(unittest.TestCase):
     @patch.object(security, "setFilePermissions")
     def test_create_ks_ts(self,
                           mock_file_perms):
+        """Test cert generation and keystore + truststore creation."""
+
         def __cleanup():
             for i in ["/tmp/testcert.crt", "/tmp/testcert.key",
                       "/tmp/testks.jks", "/tmp/testts.jks",
