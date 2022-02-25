@@ -684,7 +684,9 @@ class KafkaListenerRequiresRelation(KafkaListenerRelation):
                      truststore_pwd,
                      user=None,
                      group=None,
-                     mode=None):
+                     mode=None,
+                     extra_certs=[],
+                     extra_cas=[]):
         req = json.loads(self.request) or {}
         req["cert"] = cert_chain
         self.set_request(req)

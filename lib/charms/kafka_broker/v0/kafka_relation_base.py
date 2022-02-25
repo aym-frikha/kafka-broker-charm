@@ -131,7 +131,8 @@ class KafkaRelationBase(Object):
     def relations(self):
         return self.framework.model.relations[self._relation_name]
 
-    def _get_all_tls_cert(self, ext_list=[]):
+    def _get_all_tls_cert(self, ext_list=[], extra_cas=[]):
+        """Captures all TLS information from relations and generates Truststore. """
         if not self.is_TLS_enabled():
             # If there is no tls announced by relation peers,
             # then CreateTruststore is not needed. Do not raise an Exception
@@ -142,14 +143,16 @@ class KafkaRelationBase(Object):
             for u in self.all_units(r):
                 if "tls_cert" in r.data[u]:
                     crt_list.append(r.data[u]["tls_cert"])
-        self.state.trusted_certs = "::".join(crt_list)
+        self.state.trusted_certs = \
+            "::".join(crt_list)
         CreateTruststore(self.state.ts_path,
                          self.state.ts_pwd,
                          self.state.trusted_certs.split("::"),
                          ts_regenerate=True,
                          user=self.state.user,
                          group=self.state.group,
-                         mode=self.state.mode)
+                         mode=self.state.mode,
+                         extra_cas=extra_cas)
 
     def is_TLS_enabled(self, relation=None):
         if not relation and not self.relations:
@@ -179,7 +182,18 @@ class KafkaRelationBase(Object):
                      user=None,
                      group=None,
                      mode=None,
-                     extra_certs=[]):
+                     extra_certs=[],
+                     extra_cas=[]):
+        """Sets the certificates for all the relation units and creates a
+        truststore file to store them.
+
+        To trust each other, units need to trust the same CAs and certs.
+        The set_TLS_auth does the following:
+        1) Add current certificate passed as cert_chain to the relation;
+        2) Adds extra certificates coming, e.g. from other relations that
+           are composed of CA chain+certificate using extra_certs;
+        3) Adds extra CAs to be trusted, e.g. via trust action.
+        """
         if not self.relations:
             raise KafkaRelationBaseNotUsedError()
         for r in self.relations:
@@ -197,7 +211,7 @@ class KafkaRelationBase(Object):
         if mode:
             self.state.mode = mode
         # 2) Grab any already-published tls certs and generate the truststore
-        self._get_all_tls_cert(extra_certs)
+        self._get_all_tls_cert(ext_list=extra_certs, extra_cas=extra_cas)
 
     @property
     def peer_addresses(self):

@@ -432,6 +432,7 @@ class KafkaJavaCharmBase(JavaCharmBase):
         self.get_ssl_methods_list = []
         self._kerberos_principal = None
         self.ks.set_default(keytab="")
+        self.ks.set_default(ssl_certs=[])
         self._sasl_protocol = None
         # Save the internal content of keytab file from the action.
         # use it as part of the context in the config_changed
@@ -521,27 +522,43 @@ class KafkaJavaCharmBase(JavaCharmBase):
     def sasl_protocol(self, s):
         self._sasl_protocol = s
 
-    def add_certificate_action(self, certs):
+    def _recover_certificates_from_file(self, cert_files):
+        """Implements a helper method for the certificate actions.
+
+        Recovers all the certs from cert_files."""
+        certs = []
+        for crt in cert_files:
+            with open(crt) as f:
+                certs.append("".join(f.readlines()))
+        return certs
+
+    def add_certificates_action(self, cert_files):
         """Adds certificates to self.ks.ssl_certs. This list should be
         used to add custom certificates the entire stack needs to trust.
 
         Args:
-        - certs: multi-line string containing certs in the format:
-        ------ BEGIN CERTIFICATE -------
-        <data>
-        ------ END CERTIFICATE -------
-        ------ BEGIN CERTIFICATE .......
-        <data>
-        ...
+        - certs_files: list of certificate files to add.
         """
-        self.ks.ssl_certs.extend([
-            "-----BEGIN CERTIFICATE-----\n" + c for c in certs.split(
-                "-----BEGIN CERTIFICATE-----\n")])
+        certs = self._recover_certificates_from_file(cert_files)
+        if len(certs) == 0:
+            # No new cert to add
+            return
+        to_add = [c for c in certs if c not in self.ks.ssl_certs]
+        self.ks.ssl_certs.extend(to_add)
+        return self.ks.ssl_certs
 
-    def override_certificate_action(self):
+    def list_certificates_action(self):
+        """Returns the list of certs added to the keystore."""
+        return self.ks.ssl_certs
+
+    def remove_certificates_action(self, cert_files):
         """Empties out all the certs passed via action"""
-
-        self.ks.ss_certs = []
+        certs = self._recover_certificates_from_file(cert_files)
+        if len(certs) == 0:
+            # No new cert to add
+            return
+        new_ssl_certs = [c for c in self.ks.ssl_certs if c not in certs]
+        self.ks.ssl_certs = new_ssl_certs
 
     def _upload_keytab_base64(self, k, filename="kafka.keytab"):
         """Receives the keytab in base64 format and saves to correct file"""

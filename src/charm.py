@@ -136,6 +136,14 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
                                self.on_restart_event)
         self.framework.observe(self.on.upload_keytab_action,
                                self.on_upload_keytab_action)
+        # Certificate management methods
+        self.framework.observe(self.on.add_certificates_action,
+                               self.add_certificates_action)
+        self.framework.observe(self.on.remove_certificates_action,
+                               self.remove_certificates_action)
+        self.framework.observe(self.on.list_certificates_action,
+                               self.list_certificates_action)
+
         self.cluster = KafkaBrokerCluster(self, 'cluster',
                                           self.config.get("cluster-count", 3))
         self.zk = ZookeeperRequiresRelation(self, 'zookeeper')
@@ -183,6 +191,82 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         if self.prometheus.relations:
             return True
         return False
+
+    def _manage_listener_certs(self):
+        """Manages the certificates between cluster and listener relations.
+
+        It is important to remember that cluster relation is actually one listener: BROKER.
+        Therefore, any certificates learnt by cluster relations also need to be trusted and
+        managed by self.listener.
+        """
+        # Cluster certificate: this is set using BROKER listener
+        if len(self.get_ssl_keystore()) > 0:
+            if len(self.get_ssl_cert()) > 0 and \
+               len(self.get_ssl_key()) > 0 and \
+               len(self.get_ssl_truststore()) > 0:
+                logger.info("Setting SSL for client connections")
+                user = self.config.get("user", "")
+                group = self.config.get("group", "")
+                extra_certs = self.cluster.get_all_certs()
+                # Grab the extra CAs that have been passed via certificates action
+                extra_cas = self.ks.ssl_certs
+
+                # There are 3x possible situations to manage certs:
+                # 1) listener relation exists: push certs there
+                # 2) cluster only relation exists: use it to generate certs
+                # 3) None of the above: it is a single node
+                if self.listener.relations:
+                    logger.info("Listener relation found: manage certs")
+                    self.listener.set_TLS_auth(
+                        self.get_ssl_cert(),
+                        self.get_ssl_truststore(),
+                        self.ks.ts_password,
+                        user, group, 0o640,
+                        extra_certs=extra_certs,
+                        extra_cas=extra_cas)
+                elif self.cluster.relation:
+                    logger.info("Listener relation not found"
+                                " but cluster is present: manage certs")
+                    extra_certs = self.cluster.get_all_certs()
+                    extra_certs.append(self.get_ssl_cert())
+                    self.listener.user = self.config["user"]
+                    self.listener.group = self.config["group"]
+                    self.listener.mode = 0o640
+                    self.listener.ts_path = self.get_ssl_truststore()
+                    self.listener.ts_pwd = self.ks.ts_password
+                    # self.cluster._get_all_tls_certs()
+                    CreateTruststore(self.get_ssl_truststore(),
+                                     self.ks.ts_password,
+                                     extra_certs,
+                                     ts_regenerate=True,
+                                     user=self.config["user"],
+                                     group=self.config["group"],
+                                     mode=0o640,
+                                     extra_cas=extra_cas)
+                else:
+                    logger.info("Neither Listener nor Cluster relations "
+                                "create the truststore manually.")
+                    CreateTruststore(self.get_ssl_truststore(),
+                                     self.ks.ts_password,
+                                     [self.get_ssl_cert()],
+                                     ts_regenerate=True,
+                                     user=self.config["user"],
+                                     group=self.config["group"],
+                                     mode=0o640,
+                                     extra_cas=extra_cas)
+
+    def add_certificates_action(self, event):
+        """Loads new CAs into ks.ssl_certs and regenerates truststores."""
+        super().add_certificates_action(event.params["cert-files"])
+        self._manage_listener_certs()
+
+    def remove_certificates_action(self, event):
+        """Removes CAs from ks.ssl_certs and regenerates truststores."""
+        super().remove_certificates_action(event.params["cert-files"])
+        self._manag_listener_certs()
+
+    def list_certificates_action(self, event):
+        return super().list_certificates_action()
 
     def on_upload_keytab_action(self, event):
         """Implement the keytab action upload."""
@@ -652,60 +736,7 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         #     b711fc9e3b43d2069a9ac8b13177e7f2a07c7bfb/VARIABLES.md
         # server_props["kafka_broker_rest_proxy_enabled"] = False
 
-        # Cluster certificate: this is set using BROKER listener
-        if len(self.get_ssl_keystore()) > 0:
-            if len(self.get_ssl_cert()) > 0 and \
-               len(self.get_ssl_key()) > 0 and \
-               len(self.get_ssl_truststore()) > 0:
-                logger.info("Setting SSL for client connections")
-                user = self.config.get("user", "")
-                group = self.config.get("group", "")
-                # Manage the cluster certs first, set_ssl_cert
-                # checks if relation exists
-                self.cluster.set_ssl_cert(self.get_ssl_cert())
-                extra_certs = self.cluster.get_all_certs()
-                logger.debug("Extra certificates "
-                             "for cluster: {}".format(extra_certs))
-                # There are 3x possible situations to manage certs:
-                # 1) listener relation exists: push certs there
-                # 2) cluster only relation exists: use it to generate certs
-                # 3) None of the above: it is a single node
-                if self.listener.relations:
-                    logger.info("Listener relation found: manage certs")
-                    self.listener.set_TLS_auth(
-                        self.get_ssl_cert(),
-                        self.get_ssl_truststore(),
-                        self.ks.ts_password,
-                        user, group, 0o640,
-                        extra_certs=extra_certs)
-                elif self.cluster.relation:
-                    logger.info("Listener relation not found"
-                                " but cluster is present: manage certs")
-                    extra_certs = self.cluster.get_all_certs()
-                    extra_certs.append(self.get_ssl_cert())
-                    self.listener.user = self.config["user"]
-                    self.listener.group = self.config["group"]
-                    self.listener.mode = 0o640
-                    self.listener.ts_path = self.get_ssl_truststore()
-                    self.listener.ts_pwd = self.ks.ts_password
-                    # self.cluster._get_all_tls_certs()
-                    CreateTruststore(self.get_ssl_truststore(),
-                                     self.ks.ts_password,
-                                     extra_certs,
-                                     ts_regenerate=True,
-                                     user=self.config["user"],
-                                     group=self.config["group"],
-                                     mode=0o640)
-                else:
-                    logger.info("Neither Listener nor Cluster relations "
-                                "create the truststore manually.")
-                    CreateTruststore(self.get_ssl_truststore(),
-                                     self.ks.ts_password,
-                                     [self.get_ssl_cert()],
-                                     ts_regenerate=True,
-                                     user=self.config["user"],
-                                     group=self.config["group"],
-                                     mode=0o640)
+        self._manage_listener_certs()
 
         # Metadata service relation
         if self.mds.relations and self.distro != "confluent":

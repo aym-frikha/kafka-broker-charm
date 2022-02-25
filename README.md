@@ -49,7 +49,7 @@ Therefore, listeners are managed according to spaces.
 Kafka charms accept several types of distros: confluent, apache and apache_snap. Confluent will select to use confluent packages and demands a license key from confluent to correctly setup the environment.
 Apache_snap uses the upstream code available for Kafka clusters. That code has been compiled into snaps and can be readily deployed.
 
-WIP: Apache distro is still under implementation.
+WIP: "apache" distro is not yet available.
 
 ### Data Folders
 
@@ -98,20 +98,22 @@ Kafka uses a keystore to contain the certificate and keys for TLS. Besides, it u
 Truststore should always be set since relations may use certificates that are not trusted by default by Java's upstream truststores.
 Units will learn certificate information from its peers and across relations and store them in the truststore.
 
-If keystore is set to empty, certificates will not be used for that listener.
+If keystore is set to empty, certificates will not be used for that relation.
 
 #### Manage Certificates within the Truststore
 
-If Keystore and Truststore are specified, users can add certificates to be globally trusted by an application. Users can add certificates to truststore using:
+If Truststore is specified, users can add certificates to be globally trusted by an application. The add-/remove-/list-certificates applies to all the truststores available for this charm.
+
+Users can add certificates to truststore using:
 
 ```
-    $ juju run-action add-certificate certs=<multi-line-string-of-certs>
+    $ juju run-action add-certificate certs-files=<comma-separated-list-of-certs-to-add>
 ```
 
 If the user wants to empty out the truststore of any custom added certs, run:
 
 ```
-    $ juju run-action remove-certificates
+    $ juju run-action remove-certificates certs-files=<comma-separated-list-of-certs-to-remove
 ```
 
 If the user wants to list manually added certs to the Truststore:

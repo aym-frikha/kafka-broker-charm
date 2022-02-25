@@ -21,6 +21,7 @@ PASSWORD_LEN = 48
 
 
 nano = [
+    'get_ca_and_cert',
     '_break_crt_chain',
     'saveCrtChainToFile',
     '_check_file_exists',
@@ -36,6 +37,15 @@ nano = [
     'CreateKeystoreAndTruststore',
     'CreateTruststore'
 ]
+
+
+def get_ca_and_cert(full_chain):
+    """Returns the ca, crt in string format."""
+    chain = _break_crt_chain(full_chain)
+    if len(chain) > 1:
+        return chain[1:], chain[0]
+    # It is a self-signed cert, return the same cert for both
+    return chain[0], chain[0]
 
 
 def _break_crt_chain(buffer):
@@ -230,20 +240,30 @@ def CreateTruststore(ts_path,
                      ts_regenerate=False,
                      user=None,
                      group=None,
-                     mode=None):
+                     mode=None,
+                     extra_cas=None):
+    """Creates a Truststore and stores the list certs in ts_certs.
+
+    The Truststore is composed only of CA certificates. That assures
+    the Truststore will not have one crt chain per node, but only the
+    common list of trusted CAs.
+
+    ts_path: str, path to the truststore in the unit
+    ts_pwd: str, password for the truststore
+    ts_certs: list, contains all the certs (str) to be added
+    ts_regenerate: bool, if True, it will rewrite the truststore file
+    user, group, mode: set permissions for truststore file
+    extra_cas: list of extra cas to be added
+    """
+
     crtpath = "/tmp/juju_ca_cert"
     if ts_regenerate:
         try:
             os.remove(ts_path)
         except Exception:
             pass
-    # small random string to act as prefix for the certs' alias
-    host_rand = genRandomPassword(6)
-    counter = 0
-    for c in ts_certs:
-        with open(crtpath, "w") as f:
-            f.write(c)
-            f.close()
+
+    def _add_cert_to_ts(ts_path, host_rand, counter, crtpath, ts_pwd):
         # ZK doc: alias must change per cert added
         ts_cmd = ["keytool", "-noprompt", "-keystore", ts_path,
                   "-storetype", "pkcs12", "-alias",
@@ -251,6 +271,24 @@ def CreateTruststore(ts_path,
                   "-trustcacerts", "-import", "-file", crtpath,
                   "-deststorepass", ts_pwd]
         subprocess.check_call(ts_cmd)
-        setFilePermissions(ts_path, user, group, mode)
+
+    # small random string to act as prefix for the certs' alias
+    host_rand = genRandomPassword(6)
+    counter = 0
+    for c in ts_certs:
+        with open(crtpath, "w") as f:
+            ca, _ = get_ca_and_cert(c)
+            f.write(ca)
+            f.close()
+        _add_cert_to_ts(ts_path, host_rand, counter, crtpath, ts_pwd)
         counter += 1
+    # Now, add the CAs that are only CAs passed via extra_cas
+    for c in (extra_cas or []):
+        with open(crtpath, "w") as f:
+            f.write(c)
+            f.close()
+        _add_cert_to_ts(ts_path, host_rand, counter, crtpath, ts_pwd)
+        counter += 1
+    # Update permissions
+    setFilePermissions(ts_path, user, group, mode)
     os.remove(crtpath)
