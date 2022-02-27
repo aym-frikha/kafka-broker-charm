@@ -43,15 +43,37 @@ def get_ca_and_cert(full_chain):
     """Returns the ca, crt in string format."""
     chain = _break_crt_chain(full_chain)
     if len(chain) > 1:
-        return chain[1:], chain[0]
+        return "\n".join(chain[1:]), chain[0]
     # It is a self-signed cert, return the same cert for both
     return chain[0], chain[0]
 
 
 def _break_crt_chain(buffer):
-    return [i+"-----END CERTIFICATE-----\n"
-            for i in buffer.split("-----END CERTIFICATE-----\n")
-            if i.startswith("-----BEGIN CERTIFICATE-----\n")]
+    """Breaks the certificate chain string into a list.
+
+    Splits the cert chain with "-----END CERTIFICATE-----".
+
+    There are two cases to consider:
+    1) Certificates ending on "-----END CERTIFICATE-----"
+    2) Certificates ending on "-----END CERTIFICATE-----\n"
+
+    In case (1), there will be certificates in the list with "\n-----BEGIN CERTIFICATE-----\n"
+    at the start. In case (2), certificates will be rendered correctly. There will be some empty
+    or "\n" strings in the intermediate list as well.
+
+    The inner list comprehension will parse the chain string into chunks and filter the cases of not
+    being certificates (i.e. starting with "-----BEGIN CERTIFICATE-----\n") by either trying
+    to remove the "\n" at the start or just setting that string to None.
+
+    The outer list comprehension ensures only meaningful (not None) are considered.
+    """
+    return [x for x in [i+"-----END CERTIFICATE-----"
+                        if i.startswith("-----BEGIN CERTIFICATE-----\n") else
+                        (i[1:]+"-----END CERTIFICATE-----" if i.startswith("\n-----BEGIN CERTIFICATE-----\n") else None)
+                        for i in buffer.split("-----END CERTIFICATE-----")] if x is not None]
+#    return [i+"-----END CERTIFICATE-----"
+#            for i in buffer.split("-----END CERTIFICATE-----")
+#            if i.startswith("-----BEGIN CERTIFICATE-----\n")]
 
 
 def saveCrtChainToFile(buffer,
