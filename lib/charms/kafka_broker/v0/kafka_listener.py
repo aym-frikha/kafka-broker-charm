@@ -59,8 +59,8 @@ Informs which SASL protocol will be used.
 
 cert)
 
-Actual certificate chain to be used by the client in the mTLS authentication.
-FOR NOW, MTLS IS NOT AVAILABLE.
+Extra certificate CA to be added to truststore if SSL or SASL_SSL is passed.
+This should be the certificate used by the client side.
 
 
 
@@ -246,9 +246,9 @@ class KafkaListenerProvidesRelation(KafkaListenerRelation):
     def _get_default_listeners(self, keystore_path, keystore_pwd, clientauth):
         listeners = {
             "internal": {
-                "endpoint": "INTERNAL://*BINDING*:{}".format(
+                "endpoint": "INTERNAL://*INT_EXTRA_BINDING*:{}".format(
                     self.available_port),
-                "advertise": "INTERNAL://*BINDING*:{}".format(
+                "advertise": "INTERNAL://*INT_EXTRA_BINDING*:{}".format(
                     self.available_port),
                 "is_public": False,
                 "plaintext_pwd": self.internal_pwd,
@@ -264,9 +264,9 @@ class KafkaListenerProvidesRelation(KafkaListenerRelation):
                 "ks_pwd": keystore_pwd
             },
             "external": {
-                "endpoint": "EXTERNAL://*ADVERTISE*:{}".format(
+                "endpoint": "EXTERNAL://*EXT_EXTRA_ADVERTISE*:{}".format(
                     self.available_port + 1),
-                "advertise": "EXTERNAL://*ADVERTISE*:{}".format(
+                "advertise": "EXTERNAL://*EXT_EXTRA_ADVERTISE*:{}".format(
                     self.available_port + 1),
                 "is_public": True,
                 "plaintext_pwd": self.external_pwd,
@@ -282,9 +282,9 @@ class KafkaListenerProvidesRelation(KafkaListenerRelation):
                 "ks_pwd": keystore_pwd
             },
             "broker": {
-                "endpoint": "BROKER://*BINDING*:{}".format(
+                "endpoint": "BROKER://*CLUSTER_BINDING*:{}".format(
                     self.available_port + 2),
-                "advertise": "BROKER://*BINDING*:{}".format(
+                "advertise": "BROKER://*CLUSTER_BINDING*:{}".format(
                     self.available_port + 2),
                 "is_public": False,
                 "plaintext_pwd": self.broker_pwd,
@@ -432,13 +432,52 @@ class KafkaListenerProvidesRelation(KafkaListenerRelation):
                 result.add(v["SASL"]["protocol"])
         return result
 
-    def _convert_listener_template(self, lst):
+    def _convert_listener_template(self, lst,
+                                   internal_extra_binding=None,
+                                   external_extra_binding=None,
+                                   cluster_binding=None):
+        """Convert the template coming from the leader into
+        space addresses.
+
+        Args:
+        - lst: string containing the following addresses:
+          *BINDING*, *ADVERTISE*, EXTRA bindings and CLUSTER_BINDING.
+        - internal_extra_binding: string containing internal-listener
+          extra binding's address. Use "binding_address" in this case.
+        - external_extra_binding: string containing external-listener.
+          Should use the "advertise-address" in this case.
+        - cluster_binding: string containing the cluster binding.
+          Should use the "binding-address" in this case.
+        """
+
         if not lst or len(lst) == 0:
             raise KafkaListenerRelationEmptyListenerDictError()
         listeners = lst.replace(
             "*BINDING*", get_hostname(self.binding_addr))
         listeners = listeners.replace(
             "*ADVERTISE*", get_hostname(self.advertise_addr))
+        if not internal_extra_binding:
+            listeners = listeners.replace(
+                "*INT_EXTRA_BINDING*", get_hostname(self.binding_addr))
+        else:
+            listeners = listeners.replace(
+                "*INT_EXTRA_BINDING*",
+                get_hostname(internal_extra_binding))
+        if not external_extra_binding:
+            listeners = listeners.replace(
+                "*EXT_EXTRA_ADVERTISE*", get_hostname(self.advertise_addr))
+        else:
+            listeners = listeners.replace(
+                "*EXT_EXTRA_ADVERTISE*",
+                get_hostname(external_extra_binding))
+        if not cluster_binding:
+            listeners = listeners.replace(
+                "*CLUSTER_BINDING*", get_hostname(self.binding_addr))
+        else:
+            listeners = listeners.replace(
+                "*CLUSTER_BINDING*",
+                get_hostname(cluster_binding))
+
         listeners = json.loads(listeners)
         return listeners
 
@@ -447,13 +486,21 @@ class KafkaListenerProvidesRelation(KafkaListenerRelation):
                        keystore_pwd,
                        publicKeyPath,
                        get_default=True,
-                       clientauth=False):
+                       clientauth=False,
+                       internal_extra_binding=None,
+                       external_extra_binding=None,
+                       cluster_binding=None):
+        """Generates the config options based on listener template."""
         if not _lst:
             raise KafkaListenerRelationEmptyListenerDictError()
         # In case _lst comes as None
         lst = _lst or "{}"
         # Convert the template
-        listeners = self._convert_listener_template(lst)
+        listeners = self._convert_listener_template(
+            lst,
+            internal_extra_binding=internal_extra_binding,
+            external_extra_binding=external_extra_binding,
+            cluster_binding=cluster_binding)
         # Now set the options
         listener_opts = {}
         listener_opts["listeners"] = ",".join(
@@ -500,7 +547,7 @@ class KafkaListenerProvidesRelation(KafkaListenerRelation):
                                           ".oauthbearer.sasl.server.callback"
                                           ".handler.class"] = \
                                 v["SASL"]["confluent"]["server.callback"]
-            if v["cert_present"]:
+            if v["secprot"]=="SSL" or v["secprot"]=="SASL_SSL":
                 listener_opts[prefix +
                               k + ".ssl.client.auth"] = \
                                   "required" if clientauth else "none"

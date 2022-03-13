@@ -51,6 +51,22 @@ options:
     description: |
       Define which of the SASL protocols should be used for authentication. In the case of Zookeeper,
       only kerberos and digest methods are available.
+  internal-listener-network:
+    default: ''
+    type: string
+    description: |
+      Accepts a CIDR-formatted string (e.g. 192.168.0.0/24). Used to point to which of the networks the
+      charm should use for the internal listener when "internal-listener" space is not set, or the provider
+      does not support spaces.
+      VALUE SET AT INSTALL MOMENT, cannot be changed later on.
+  external-listener-network:
+    default: ''
+    type: string
+    description: |
+      Accepts a CIDR-formatted string (e.g. 192.168.0.0/24). Used to point to which of the networks the
+      charm should use for the internal listener when "external-listener" space is not set, or the provider
+      does not support spaces.
+      VALUE SET AT INSTALL MOMENT, cannot be changed later on.
   filepath-zookeeper-client-properties:
     default: "/etc/kafka/zookeeper-tls-client.properties"
     type: string

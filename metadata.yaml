@@ -10,6 +10,9 @@ series:
   - bionic
   - focal
 subordinate: false
+extra-bindings:
+  internal-listener:
+  external-listener:
 peers:
   cluster:
     interface: kafka-broker-peer

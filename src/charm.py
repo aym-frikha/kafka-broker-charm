@@ -39,7 +39,8 @@ import interface_tls_certificates.ca_client as ca_client
 
 from charms.kafka_broker.v0.charmhelper import (
     open_port,
-    render
+    render,
+    get_address_in_network
 )
 
 from charms.kafka_broker.v0.kafka_security import (
@@ -160,6 +161,8 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         self.ks.set_default(need_restart=False)
         self.ks.set_default(ports=[])
         self.ks.set_default(endpoints=[])
+        self.ks.set_default(internal_listener="")
+        self.ks.set_default(external_listener="")
         # LMA integrations
         self.prometheus = \
             KafkaJavaCharmBasePrometheusMonitorNode(
@@ -191,6 +194,45 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         if self.prometheus.relations:
             return True
         return False
+
+    def _reconcile_extra_biding(self, bind_name, ingress=True):
+        """Reconciles the binding information. There are two options:
+
+        1) Config option is used: a config option with name format:
+        {bind_name}-network exists and is set to a non-empty value.
+        That value must be an IP range.
+        2) If not (1), then get the value of extra-binding network.
+
+        If ingress=True, search for the ingress_address, else use the
+        binding address.
+        """
+
+        if bind_name == "internal-listener" and len(self.ks.internal_listener)>0:
+            # There is already an address defined, return it.
+            return self.ks.internal_listener
+        elif bind_name == "external-listener" and len(self.ks.external_listener)>0:
+            # Likewise, there is an external listener address already defined
+            return self.ks.external_listener
+
+        addr = get_address_in_network(self.config["{}-network".format(bind_name)])
+        bind_addr = self.model.get_binding(bind_name).network.ingress_address \
+            if ingress else self.model.get_binding(bind_name).network.advertise_address
+        lst_addr = self.listener.ingress_address \
+            if ingress else self.listener.advertise_address
+        # Check if addr or the binding is equal to "listener" binding
+        # If that is the case, then try to use the binding
+        if addr == lst_addr and bind_addr == lst_addr:
+            # There is no point in following up, the addresses are all the same
+            return None
+        if addr == lst_addr:
+            addr = bind_addr
+        # update the value on the store
+        if bind_name == "internal-listener":
+            self.ks.internal_listener = addr
+        else:
+            self.ks.external_listener = addr
+        return addr
+
 
     def _manage_listener_certs(self):
         """Manages the certificates between cluster and listener relations.
@@ -341,8 +383,15 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         # In case several relations shares the same set of IPs (spaces),
         # the last relation will get to set the certificate values.
         # Therefore, the order of the list below is relevant.
-        for r in [self.cluster, self.zk, self.listener]:
+        for r in [self.cluster, self.zk]:
             self._cert_relation_set(None, r)
+        # For the listener, not only request the certificate but pass
+        # the additional IPs from extra-bindings/options if available
+        self._cert_relation_set(None, self.listener,
+                                extra_sans=[
+                                    self._reconcile_extra_biding("internal-listener", ingress=True),
+                                    self._reconcile_extra_biding("external-listener", ingress=False)
+                                ])
         self._on_config_changed(event)
 
     def on_certificates_relation_changed(self, event):
@@ -855,18 +904,23 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
             self.ks.ks_password,
             self.config["oauth-public-key-path"],
             get_default=True,
-            clientauth=self.config.get("clientAuth", False))
+            clientauth=self.config.get("clientAuth", False),
+            internal_extra_binding=self._reconcile_extra_biding("internal-listener"),
+            external_extra_binding=self._reconcile_extra_biding("external-listener", ingress=False),
+            cluster_binding=self.cluster.binding_addr)
 
-        # Open listener ports:
-        # for p in self.ks.ports:
-        #     close_port(p)
+        # Now, open the ports
         prts = []
-        e_lst = self.listener._convert_listener_template(listeners)
+        e_lst = self.listener._convert_listener_template(
+            listeners,
+            internal_extra_binding=self._reconcile_extra_biding("internal-listener"),
+            external_extra_binding=self._reconcile_extra_biding("external-listener", ingress=False),
+            cluster_binding=self.cluster.binding_addr)
         for k, v in e_lst.items():
             open_port(v["port"])
             prts.append(v["port"])
         self.ks.ports = prts
-        # Update endpoints
+        # Update NRPE endpoints
         endpoints = \
             [v["endpoint"].split("://")[1] for k, v in e_lst.items()]
         self.nrpe.recommit_checks(

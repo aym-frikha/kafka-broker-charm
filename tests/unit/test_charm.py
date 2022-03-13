@@ -168,7 +168,9 @@ class TestCharm(unittest.TestCase):
     @patch.object(kafka, "render")
     @patch.object(kafka, "render_from_string")
     @patch.object(charm, "render")
+    @patch.object(charm.KafkaBrokerCharm, "_reconcile_extra_biding")
     def test_config_changed(self,
+                            mock_reconcile_binding,
                             mock_render,
                             mock_kafka_render_string,
                             mock_kafka_class_render,
@@ -213,6 +215,7 @@ class TestCharm(unittest.TestCase):
         Use certificates passed via options and this is leader unit.
         Check each of the properties generated using mock_render.
         """
+        mock_reconcile_binding.return_value = None
         mock_shutil_which.return_value = True
         # Avoid triggering the RestartEvent
         mock_service_running.return_value = False
@@ -386,7 +389,9 @@ class TestCharm(unittest.TestCase):
     @patch.object(kafka, "render")
     @patch.object(kafka, "render_from_string")
     @patch.object(charm, "render")
+    @patch.object(charm.KafkaBrokerCharm, "_reconcile_extra_biding")
     def test_config_listene(self,
+                            mock_reconcile_binding,
                             mock_render,
                             mock_kafka_render_string,
                             mock_kafka_class_render,
@@ -431,6 +436,7 @@ class TestCharm(unittest.TestCase):
         Use certificates passed via options and this is leader unit.
         Add listener relations with 2x applications but no SASL.
         """
+        mock_reconcile_binding.return_value = None
         mock_shutil_which.return_value = True
         # Avoid triggering the RestartEvent
         mock_service_running.return_value = False
