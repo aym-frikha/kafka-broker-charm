@@ -2,11 +2,13 @@
 # See LICENSE file for licensing details.
 name: kafka-broker
 description: |
-  TODO: fill out the charm's description
+  Automate the deployment of a production-ready kafka
+  cluster using either Apache or Confluent's distribution.
 summary: |
-  TODO: fill out the charm's summary
+  Production-ready kafka cluster automation
 series:
   - bionic
+  - focal
 subordinate: false
 peers:
   cluster:
