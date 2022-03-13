@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
-# Copyright 2021 pguimaraes
-# See LICENSE file for licensing details.
 
-import base64
+"""A Juju machine charm for Kafka."""
+
 import logging
 import os
-import socket
 import yaml
 import json
+import hashlib
 
 from ops.main import main
 from ops.model import (
@@ -16,52 +15,48 @@ from ops.model import (
     BlockedStatus
 )
 
-from charmhelpers.core.templating import render
-
-from charmhelpers.core.host import (
+from charms.operator_libs_linux.v1.systemd import (
     service_running,
     service_restart,
-    service_resume
+    service_resume,
+    daemon_reload
 )
 
-from wand.apps.kafka import (
+from charms.kafka_broker.v0.kafka_base_class import (
     KafkaJavaCharmBase,
     KafkaCharmBaseMissingConfigError,
     KafkaJavaCharmBasePrometheusMonitorNode,
     KafkaJavaCharmBaseNRPEMonitoring
 )
 from cluster import KafkaBrokerCluster
-from wand.apps.relations.zookeeper import ZookeeperRequiresRelation
-from wand.apps.relations.kafka_relation_base import (
+from charms.zookeeper.v0.zookeeper import ZookeeperRequiresRelation
+from charms.kafka_broker.v0.kafka_relation_base import (
     KafkaRelationBaseNotUsedError,
     KafkaRelationBaseTLSNotSetError
 )
 
-from wand.apps.relations.tls_certificates import (
-    TLSCertificateRequiresRelation,
-    TLSCertificateDataNotFoundInRelationError,
-    TLSCertificateRelationNotPresentError
+import interface_tls_certificates.ca_client as ca_client
+
+from charms.kafka_broker.v0.charmhelper import (
+    open_port,
+    render
 )
 
-from charmhelpers.core.hookenv import (
-    open_port
-)
-
-from wand.security.ssl import (
+from charms.kafka_broker.v0.kafka_security import (
     setFilePermissions,
     genRandomPassword,
     generateSelfSigned,
     PKCS12CreateKeystore,
     CreateTruststore
 )
-from wand.apps.relations.kafka_listener import (
+from charms.kafka_broker.v0.kafka_listener import (
     KafkaListenerProvidesRelation,
     KafkaListenerRelationEmptyListenerDictError
 )
-from wand.apps.relations.kafka_mds import (
+from charms.kafka_broker.v0.kafka_mds import (
     KafkaMDSProvidesRelation
 )
-from wand.contrib.coordinator import (
+from ops_coordinator.ops_coordinator import (
     RestartCharmEvent,
     OpsCoordinator
 )
@@ -88,22 +83,31 @@ CONFLUENT_PACKAGES = [
 
 
 class KafkaBrokerCharmMDSNotSupportedError(Exception):
+    """Exception raised when MDS relation is but distro is not confluent."""
 
     def __init__(self, distro):
+        """Return error message for mds not supported."""
         message = "MDS is not supported on " + \
                   "{} distribution, only Confluent".format(distro)
         super().__init__(message)
 
 
 class KafkaBrokerCharm(KafkaJavaCharmBase):
+    """Implements the Kafka machine charm."""
+
     on = RestartCharmEvent()
 
     def _install_tarball(self):
+        """Deploy Kafka from a tarball resource."""
         # Use _generate_service_files here
         raise Exception("Not Implemented Yet")
 
     def __init__(self, *args):
+        """Initialize kafka charm."""
         super().__init__(*args)
+        self.certificates = ca_client.CAClient(
+            self,
+            'certificates')
         self.framework.observe(self.on.install, self._on_install)
         self.framework.observe(self.on.config_changed, self._on_config_changed)
         self.framework.observe(self.on.cluster_relation_joined,
@@ -114,9 +118,9 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
                                self._on_zookeeper_relation_joined)
         self.framework.observe(self.on.zookeeper_relation_changed,
                                self._on_zookeeper_relation_changed)
-        self.framework.observe(self.on.certificates_relation_joined,
+        self.framework.observe(self.certificates.on.ca_available,
                                self.on_certificates_relation_joined)
-        self.framework.observe(self.on.certificates_relation_changed,
+        self.framework.observe(self.certificates.on.tls_server_config_ready,
                                self.on_certificates_relation_changed)
         self.framework.observe(self.on.update_status,
                                self.on_update_status)
@@ -132,11 +136,17 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
                                self.on_restart_event)
         self.framework.observe(self.on.upload_keytab_action,
                                self.on_upload_keytab_action)
+        # Certificate management methods
+        self.framework.observe(self.on.add_certificates_action,
+                               self.add_certificates_action)
+        self.framework.observe(self.on.remove_certificates_action,
+                               self.remove_certificates_action)
+        self.framework.observe(self.on.list_certificates_action,
+                               self.list_certificates_action)
+
         self.cluster = KafkaBrokerCluster(self, 'cluster',
                                           self.config.get("cluster-count", 3))
         self.zk = ZookeeperRequiresRelation(self, 'zookeeper')
-        self.certificates = \
-            TLSCertificateRequiresRelation(self, 'certificates')
         self.ks.set_default(zk_cert="")
         self.ks.set_default(zk_key="")
         self.ks.set_default(ssl_cert="")
@@ -173,22 +183,93 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         self.listener_info = None
 
     def __del__(self):
+        """Ensure coordinator will release any locks."""
         self.coordinator.release()
 
     def is_jmxexporter_enabled(self):
+        """Check if prometheus relation exists."""
         if self.prometheus.relations:
             return True
         return False
 
-    @property
-    def ctx(self):
-        return json.loads(self.ks.config_state)
+    def _manage_listener_certs(self):
+        """Manages the certificates between cluster and listener relations.
 
-    @ctx.setter
-    def ctx(self, c):
-        self.ks.ctx = json.dumps(c)
+        It is important to remember that cluster relation is actually one listener: BROKER.
+        Therefore, any certificates learnt by cluster relations also need to be trusted and
+        managed by self.listener.
+        """
+        # Cluster certificate: this is set using BROKER listener
+        if len(self.get_ssl_keystore()) > 0:
+            if len(self.get_ssl_cert()) > 0 and \
+               len(self.get_ssl_key()) > 0 and \
+               len(self.get_ssl_truststore()) > 0:
+                logger.info("Setting SSL for client connections")
+                user = self.config.get("user", "")
+                group = self.config.get("group", "")
+                extra_certs = self.cluster.get_all_certs()
+                # Grab the extra CAs that have been passed via certificates action
+                extra_cas = self.ks.ssl_certs
+
+                # There are 3x possible situations to manage certs:
+                # 1) listener relation exists: push certs there
+                # 2) cluster only relation exists: use it to generate certs
+                # 3) None of the above: it is a single node
+                if self.listener.relations:
+                    logger.info("Listener relation found: manage certs")
+                    self.listener.set_TLS_auth(
+                        self.get_ssl_cert(),
+                        self.get_ssl_truststore(),
+                        self.ks.ts_password,
+                        user, group, 0o640,
+                        extra_certs=extra_certs,
+                        extra_cas=extra_cas)
+                elif self.cluster.relation:
+                    logger.info("Listener relation not found"
+                                " but cluster is present: manage certs")
+                    extra_certs = self.cluster.get_all_certs()
+                    extra_certs.append(self.get_ssl_cert())
+                    self.listener.user = self.config["user"]
+                    self.listener.group = self.config["group"]
+                    self.listener.mode = 0o640
+                    self.listener.ts_path = self.get_ssl_truststore()
+                    self.listener.ts_pwd = self.ks.ts_password
+                    # self.cluster._get_all_tls_certs()
+                    CreateTruststore(self.get_ssl_truststore(),
+                                     self.ks.ts_password,
+                                     extra_certs,
+                                     ts_regenerate=True,
+                                     user=self.config["user"],
+                                     group=self.config["group"],
+                                     mode=0o640,
+                                     extra_cas=extra_cas)
+                else:
+                    logger.info("Neither Listener nor Cluster relations "
+                                "create the truststore manually.")
+                    CreateTruststore(self.get_ssl_truststore(),
+                                     self.ks.ts_password,
+                                     [self.get_ssl_cert()],
+                                     ts_regenerate=True,
+                                     user=self.config["user"],
+                                     group=self.config["group"],
+                                     mode=0o640,
+                                     extra_cas=extra_cas)
+
+    def add_certificates_action(self, event):
+        """Loads new CAs into ks.ssl_certs and regenerates truststores."""
+        super().add_certificates_action(event.params["cert-files"])
+        self._manage_listener_certs()
+
+    def remove_certificates_action(self, event):
+        """Removes CAs from ks.ssl_certs and regenerates truststores."""
+        super().remove_certificates_action(event.params["cert-files"])
+        self._manag_listener_certs()
+
+    def list_certificates_action(self, event):
+        return super().list_certificates_action()
 
     def on_upload_keytab_action(self, event):
+        """Implement the keytab action upload."""
         try:
             self._upload_keytab_base64(
                 event.params["keytab"], filename="kafka_broker.keytab")
@@ -200,7 +281,7 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         event.set_results({"keytab": "Uploaded!"})
 
     def on_restart_event(self, event):
-        logger.debug("EVENT DEBUG: on_restart_event called")
+        """Run the restart logic."""
         if not self.ks.need_restart:
             # There is a chance of several restart events being stacked.
             # This check ensures a single restart happens if several
@@ -215,46 +296,41 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
             # requests for this unit anymore).
             # We can drop any other restart events that were stacked and
             # waiting for processing.
-            logger.debug("EVENT DEBUG: restart event abandoned,"
-                         " need_restart is unset")
             if self.listener_info:
                 logger.debug("Running bootstrap_data: {}".format(
                     self.listener_info))
                 self.listener.set_bootstrap_data(self.listener_info)
             return
-        if event.restart(self.coordinator):
-            if self.check_ports_are_open(
-                    endpoints=self.ks.endpoints,
-                    retrials=3):
-                # Restart was successful, update need_restart and inform
-                # the clients via listener relation
-                self.model.unit.status = \
-                    ActiveStatus("service running")
-                # Restart was successful, if the charm is keeping track
-                # of a context, that is the place it should be updated
-                self.ks.config_state = event.ctx
-                # Toggle need_restart as we just did it.
-                self.ks.need_restart = False
-                logger.debug("EVENT DEBUG: restart event.restart() successful")
-                # Inform the clients on listener relation:
-                # self.coordinator.run_action()
-                if self.listener_info:
-                    logger.debug("Running bootstrap_data: {}".format(
-                        self.listener_info))
-                    self.listener.set_bootstrap_data(self.listener_info)
-
+        try:
+            if event.restart(self.coordinator):
+                if self.check_ports_are_open(
+                        endpoints=self.ks.endpoints,
+                        retrials=3):
+                    # Restart was successful, update need_restart and inform
+                    # the clients via listener relation
+                    self.model.unit.status = \
+                        ActiveStatus("service running")
+                    # Toggle need_restart as we just did it.
+                    self.ks.need_restart = False
+                else:
+                    logger.warning("Failure at restart, operator should check")
+                    self.model.unit.status = \
+                        BlockedStatus("Restart Failed, check service")
             else:
-                logger.warning("Failure at restart, operator should check")
-                self.model.unit.status = \
-                    BlockedStatus("Restart Failed, check service")
-        else:
-            # defer the RestartEvent as it is still waiting for the
-            # lock to be released.
-            logger.debug("EVENT DEBUG: restart event.restart() failed, defer")
-            event.defer()
+                # defer the RestartEvent as it is still waiting for the
+                # lock to be released.
+                event.defer()
+        # Not using SystemdError as it is not exposed
+        except Exception as e:
+            # except SystemdError:
+            logger.warning("Restart failed, blocking unit: {}".format(e))
+            self.model.unit.status = \
+                BlockedStatus("Restart Failed, check service")
+            # Ignore the next restarts
+            self.ks.need_restart = False
 
     def on_certificates_relation_joined(self, event):
-        self.certificates.on_tls_certificate_relation_joined(event)
+        """Request the certificates needed for this unit."""
         # Relation just joined, request certs for each of the relations
         # That will happen once. The certificates will be generated, then
         # it will trigger a -changed Event on certificates, which will
@@ -270,14 +346,16 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         self._on_config_changed(event)
 
     def on_certificates_relation_changed(self, event):
-        self.certificates.on_tls_certificate_relation_changed(event)
+        """Check if the certificates are ready and update configs."""
         self._on_config_changed(event)
 
     def on_listeners_relation_joined(self, event):
+        """Execute listener logic."""
         self.listener.on_listener_relation_joined(event)
         self._on_config_changed(event)
 
     def on_listeners_relation_changed(self, event):
+        """Execute listener logic."""
         try:
             self.listener.on_listener_relation_changed(event)
         except KafkaRelationBaseTLSNotSetError:
@@ -294,27 +372,31 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         self._on_config_changed(event)
 
     def on_mds_relation_joined(self, event):
+        """Add the MDS relation for confluent kafka."""
         # TODO: Implement
         return
 
     def on_mds_relation_changed(self, event):
+        """Add the MDS relation for confluent kafka."""
         # TODO: Implement
         return
 
     def on_update_status(self, event):
+        """Update the status of the charm according to service status."""
         # Check if the locks must be handled or not
         # coordinator = OpsCoordinator()
         # coordinator.handle_locks(self.unit)
         super().on_update_status(event)
 
     def _on_cluster_relation_joined(self, event):
+        """Call cluster class for -joined event."""
         self.cluster.user = self.config.get("user", "")
         self.cluster.group = self.config.get("group", "")
         self.cluster.mode = 0o640
         try:
             self.cluster.on_cluster_relation_joined(event)
         except KafkaRelationBaseNotUsedError as e:
-            # Relation not been used any other application, move on
+            # Relation not been used by any other application, move on
             logger.info(str(e))
         except KafkaRelationBaseTLSNotSetError as e:
             event.defer()
@@ -322,31 +404,34 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         self._on_config_changed(event)
 
     def _on_cluster_relation_changed(self, event):
+        """Call cluster class for -changed event."""
         self.cluster.user = self.config.get("user", "")
         self.cluster.group = self.config.get("group", "")
         self.cluster.mode = 0o640
         try:
             self.cluster.on_cluster_relation_changed(event)
         except KafkaRelationBaseNotUsedError as e:
-            # Relation not been used any other application, move on
+            # Relation not been used by any other application, move on
             logger.info(str(e))
         except KafkaRelationBaseTLSNotSetError as e:
             event.defer()
             self.model.unit.status = BlockedStatus(str(e))
         self._on_config_changed(event)
+        # Inform prometheus there are new units to monitor
         if not self.prometheus.relations:
             return
         if len(self.prometheus.relations) > 0:
             self.prometheus.on_prometheus_relation_changed(event)
 
     def _on_zookeeper_relation_joined(self, event):
+        """Call zk class for -joined event."""
         self.zk.user = self.config.get("user", "")
         self.zk.group = self.config.get("group", "")
         self.zk.mode = 0o640
         try:
             self.zk.on_zookeeper_relation_joined(event)
         except KafkaRelationBaseNotUsedError as e:
-            # Relation not been used any other application, move on
+            # Relation not been used by any other application, move on
             logger.info(str(e))
         except KafkaRelationBaseTLSNotSetError as e:
             event.defer()
@@ -354,13 +439,14 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         self._on_config_changed(event)
 
     def _on_zookeeper_relation_changed(self, event):
+        """Call zk class for -changed event."""
         self.zk.user = self.config.get("user", "")
         self.zk.group = self.config.get("group", "")
         self.zk.mode = 0o640
         try:
             self.zk.on_zookeeper_relation_changed(event)
         except KafkaRelationBaseNotUsedError as e:
-            # Relation not been used any other application, move on
+            # Relation not been used by any other application, move on
             logger.info(str(e))
         except KafkaRelationBaseTLSNotSetError as e:
             event.defer()
@@ -379,72 +465,14 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
             # Otherwise, charm is running then issue a restart event.
             self.ks.need_restart = True
             # Issue a restart event with current context.
-            self.on.restart_event.emit(self.ctx, services=self.services)
+            self.on.restart_event.emit(
+                self.ks.config_state, services=self.services)
         self._on_config_changed(event)
 
-    def _cert_relation_set(self, event, rel=None):
-        # Will introduce this CN format later
-        def __get_cn():
-            return "*." + ".".join(socket.getfqdn().split(".")[1:])
-        # generate cert request if tls-certificates available
-        # rel may be set to None in cases such as config-changed
-        # or install events. In these cases, the goal is to run
-        # the validation at the end of this method
-        if rel:
-            if self.certificates.relation:
-                sans = [
-                    socket.gethostname(),
-                    socket.getfqdn()
-                ]
-                # We do not need to know if any relations exists but rather
-                # if binding/advertise addresses exists.
-                if rel.binding_addr:
-                    sans.append(rel.binding_addr)
-                if rel.advertise_addr:
-                    sans.append(rel.advertise_addr)
-                if rel.hostname:
-                    sans.append(rel.hostname)
-
-                # Common name is always CN as this is the element
-                # that organizes the cert order from tls-certificates
-                self.certificates.request_server_cert(
-                    cn=rel.binding_addr,
-                    sans=sans)
-            logger.info("Either certificates "
-                        "relation not ready or not set")
-        # This try/except will raise an exception if tls-certificate
-        # is set and there is no certificate available on the relation yet.
-        # That will also cause the
-        # event to be deferred, waiting for certificates relation to finish
-        # If tls-certificates is not set, then the try will run normally,
-        # either marking there is no certificate configuration set or
-        # concluding the method.
-        try:
-            if (not self.get_ssl_cert() or not self.get_ssl_key()):
-                self.model.unit.status = \
-                    BlockedStatus("Waiting for certificates "
-                                  "relation or option")
-                logger.info("Waiting for certificates relation "
-                            "to publish data")
-                return False
-        # These excepts will treat the case tls-certificates relation is used
-        # but the relation is not ready yet
-        # KeyError is also a possibility, if get_ssl_cert is called before any
-        # event that actually submits a request for a cert is done
-        except (TLSCertificateDataNotFoundInRelationError,
-                TLSCertificateRelationNotPresentError,
-                KeyError):
-            self.model.unit.status = \
-                BlockedStatus("There is no certificate option or "
-                              "relation set, waiting...")
-            logger.warning("There is no certificate option or "
-                           "relation set, waiting...")
-            if event:
-                event.defer()
-            return False
-        return True
-
     def _generate_keystores(self):
+        """Generate the keystores for SSL and zookeeper relations."""
+        # TODO: move to kafka base class
+
         # If we will auto-generate the root ca
         # and at least one of the certs or keys is not yet set,
         # then we can proceed and regenerate it.
@@ -515,17 +543,26 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
                                   "regenerate-keystore-truststore", False))
 
     def _on_install(self, event):
+        """Run the installation process.
+
+        There are several options for installation, depending on distro.
+        """
         self.model.unit.status = MaintenanceStatus("Installing packages...")
         super()._on_install(event)
         packages = []
         if self.config.get("install_method") == "archive":
+            # TODO: implement the tarball installation
             self._install_tarball()
         elif self.distro == "confluent" or self.distro == "apache":
+            # Both confluent and apache install via packages.
             if self.distro == "confluent":
                 packages = CONFLUENT_PACKAGES + ['libsystemd-dev']
             else:
+                # TODO: implement apache / package installation
                 raise Exception("Not Implemented Yet")
         elif self.distro == "apache_snap":
+            # Install via snaps, either the resource attached to the charm
+            # or from snapstore.
             # Override prometheus jar file
             self.JMX_EXPORTER_JAR_FOLDER = \
                 "/snap/kafka/current/jar/"
@@ -541,6 +578,7 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         data_log_dir = \
             list(yaml.safe_load(
                      self.config.get("data-log-dir", "")).items())[0][1]
+        # Create the log folders.
         self.create_log_dir(self.config["data-log-device"],
                             data_log_dir,
                             data_log_fs,
@@ -552,6 +590,13 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         self._on_config_changed(event)
 
     def _check_if_ready_to_start(self, ctx):
+        """Check if restart event is necessary.
+
+        If the cluster is not yet ready, return waiting on other units.
+        Then, check if the context passed via argument is the same as the last
+        context hash seen. If yes, it means there was no relevant configuration
+        change that justifies a restart.
+        """
         if not self.cluster.is_ready:
             self.model.unit.status = \
                 BlockedStatus("Waiting for other cluster units")
@@ -565,99 +610,52 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
             return False
         return True
 
-    def _rel_get_remote_units(self, rel_name):
-        return self.framework.model.get_relation(rel_name).units
-
     def get_ssl_cert(self):
-        if self.config["generate-root-ca"]:
-            return self.ks.ssl_cert
-        if len(self.config.get("ssl_cert")) > 0 and \
-           len(self.config.get("ssl_key")) > 0:
-            return base64.b64decode(self.config["ssl_cert"]).decode("ascii")
-        try:
-            certs = self.certificates.get_server_certs()
-            c = certs[self.listener.binding_addr]["cert"] + \
-                self.certificates.get_chain()
-            logger.debug("SSL Certificate chain"
-                         " from tls-certificates: {}".format(c))
-        except (TLSCertificateDataNotFoundInRelationError,
-                TLSCertificateRelationNotPresentError):
-            # Certificates not ready yet, return empty
-            return ""
-        return c
+        """Get the certificate from the option or relation."""
+        return self._get_ssl_cert(self.listener.binding_addr)
 
     def get_ssl_key(self):
-        if self.config["generate-root-ca"]:
-            return self.ks.ssl_key
-        if len(self.config.get("ssl_cert")) > 0 and \
-           len(self.config.get("ssl_key")) > 0:
-            return base64.b64decode(self.config["ssl_key"]).decode("ascii")
-        try:
-            certs = self.certificates.get_server_certs()
-            k = certs[self.listener.binding_addr]["key"]
-        except (TLSCertificateDataNotFoundInRelationError,
-                TLSCertificateRelationNotPresentError):
-            # Certificates not ready yet, return empty
-            return ""
-        return k
+        """Get the key from the option or relation."""
+        return self._get_ssl_key(self.listener.binding_addr)
 
     def get_ssl_keystore(self):
+        """Get the keystore."""
         path = self.config.get("keystore-path", "")
         return path
 
     def get_ssl_truststore(self):
+        """Get the truststore."""
         path = self.config.get("truststore-path", "")
         return path
 
     def get_zk_keystore(self):
+        """Get the keystore."""
         path = self.config.get("keystore-zookeeper-path", "")
         return path
 
     def get_zk_truststore(self):
+        """Get the truststore."""
         path = self.config.get("truststore-zookeeper-path", "")
         return path
 
     def get_zk_cert(self):
-        if self.config["generate-root-ca"]:
-            return self.ks.zk_cert
-        if len(self.config.get("ssl_cert")) > 0 and \
-           len(self.config.get("ssl_key")) > 0:
-            return base64.b64decode(
-                self.config["ssl_cert"]).decode("ascii")
-        try:
-            certs = self.certificates.get_server_certs()
-            c = certs[self.zk.binding_addr]["cert"] + \
-                self.certificates.get_chain()
-            logger.debug("SSL Certificate chain"
-                         " from tls-certificates: {}".format(c))
-        except (TLSCertificateDataNotFoundInRelationError,
-                TLSCertificateRelationNotPresentError):
-            # Certificates not ready yet, return empty
-            return ""
-        return c
+        """Get the certificate from the option or relation."""
+        return self._get_ssl_cert(
+                   self.zk.binding_addr, "ssl-zk-cert", "ssl-zk-key")
 
     def get_zk_key(self):
-        if self.config["generate-root-ca"]:
-            return self.ks.zk_key
-        if len(self.config.get("ssl_cert")) > 0 and \
-           len(self.config.get("ssl_key")) > 0:
-            return base64.b64decode(
-                self.config["ssl_key"]).decode("ascii")
-        try:
-            certs = self.certificates.get_server_certs()
-            k = certs[self.zk.binding_addr]["key"]
-        except (TLSCertificateDataNotFoundInRelationError,
-                TLSCertificateRelationNotPresentError):
-            # Certificates not ready yet, return empty
-            return ""
-        return k
+        """Get the key from the option or relation."""
+        return self._get_ssl_key(
+                   self.zk.binding_addr, "ssl-zk-cert", "ssl-zk-key")
 
     def get_oauth_token_cert(self):
+        """Get OAUTH token certificate."""
         # TODO: implement cert/key generation and
         # management through this getters
         raise Exception("Not Implemented Yet")
 
     def get_oauth_token_key(self):
+        """Get OAUTH token key."""
         # TODO: implement cert/key generation and
         # management through this getters
         raise Exception("Not Implemented Yet")
@@ -738,60 +736,7 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         #     b711fc9e3b43d2069a9ac8b13177e7f2a07c7bfb/VARIABLES.md
         # server_props["kafka_broker_rest_proxy_enabled"] = False
 
-        # Cluster certificate: this is set using BROKER listener
-        if len(self.get_ssl_keystore()) > 0:
-            if len(self.get_ssl_cert()) > 0 and \
-               len(self.get_ssl_key()) > 0 and \
-               len(self.get_ssl_truststore()) > 0:
-                logger.info("Setting SSL for client connections")
-                user = self.config.get("user", "")
-                group = self.config.get("group", "")
-                # Manage the cluster certs first, set_ssl_cert
-                # checks if relation exists
-                self.cluster.set_ssl_cert(self.get_ssl_cert())
-                extra_certs = self.cluster.get_all_certs()
-                logger.debug("Extra certificates "
-                             "for cluster: {}".format(extra_certs))
-                # There are 3x possible situations to manage certs:
-                # 1) listener relation exists: push certs there
-                # 2) cluster only relation exists: use it to generate certs
-                # 3) None of the above: it is a single node
-                if self.listener.relations:
-                    logger.info("Listener relation found: manage certs")
-                    self.listener.set_TLS_auth(
-                        self.get_ssl_cert(),
-                        self.get_ssl_truststore(),
-                        self.ks.ts_password,
-                        user, group, 0o640,
-                        extra_certs=extra_certs)
-                elif self.cluster.relation:
-                    logger.info("Listener relation not found"
-                                " but cluster is present: manage certs")
-                    extra_certs = self.cluster.get_all_certs()
-                    extra_certs.append(self.get_ssl_cert())
-                    self.listener.user = self.config["user"]
-                    self.listener.group = self.config["group"]
-                    self.listener.mode = 0o640
-                    self.listener.ts_path = self.get_ssl_truststore()
-                    self.listener.ts_pwd = self.ks.ts_password
-                    # self.cluster._get_all_tls_certs()
-                    CreateTruststore(self.get_ssl_truststore(),
-                                     self.ks.ts_password,
-                                     extra_certs,
-                                     ts_regenerate=True,
-                                     user=self.config["user"],
-                                     group=self.config["group"],
-                                     mode=0o640)
-                else:
-                    logger.info("Neither Listener nor Cluster relations "
-                                "create the truststore manually.")
-                    CreateTruststore(self.get_ssl_truststore(),
-                                     self.ks.ts_password,
-                                     [self.get_ssl_cert()],
-                                     ts_regenerate=True,
-                                     user=self.config["user"],
-                                     group=self.config["group"],
-                                     mode=0o640)
+        self._manage_listener_certs()
 
         # Metadata service relation
         if self.mds.relations and self.distro != "confluent":
@@ -912,7 +857,7 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
             get_default=True,
             clientauth=self.config.get("clientAuth", False))
 
-        # Open listner ports:
+        # Open listener ports:
         # for p in self.ks.ports:
         #     close_port(p)
         prts = []
@@ -1078,6 +1023,7 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         return client_props
 
     def _get_service_name(self):
+        """Return the service name based on the distro selected."""
         if self.distro == "confluent":
             self.service = "confluent-server"
         elif self.distro == "apache_snap":
@@ -1087,6 +1033,7 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         return self.service
 
     def _render_jaas_conf(self, jaas_path="/etc/kafka/jaas.conf"):
+        """Get the JAAS config for authentication."""
         content = ""
         jaas_file = self.config["filepath-jaas-conf"]
         if self.is_sasl_kerberos_enabled():
@@ -1139,7 +1086,7 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         return root_logger
 
     def _on_config_changed(self, event):
-        """CONFIG CHANGE
+        """Do the configuration change.
 
         1) Check if kerberos and ZK is available
         2) Generate the Keystores
@@ -1153,7 +1100,7 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         # START CONFIG FILE UPDATES
         ctx = {}
 
-        logger.debug("Event triggerd config change: {}".format(event))
+        logger.debug("Event triggered config change: {}".format(event))
         # 1) Check Kerberos and ZK
         try:
             if self.is_sasl_kerberos_enabled() and not self.keytab:
@@ -1169,7 +1116,7 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
             self.model.unit.status = \
                 BlockedStatus("Kerberos config missing: {}".format(str(e)))
             return
-        ctx = super()._on_config_changed(event)
+        parent_config = super()._on_config_changed(event)
         if not self.zk.relation:
             # It does not make sense to progress until zookeeper is set
             self.model.unit.status = \
@@ -1187,7 +1134,7 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
 
         # 4) Generate the config files
         try:
-            ctx["server_opts"] = self._generate_server_properties(event)
+            server_opts = self._generate_server_properties(event)
         except KafkaRelationBaseNotUsedError:
             self.model.unit.status = \
                 BlockedStatus("Relation not ready yet")
@@ -1197,29 +1144,50 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
             return
         self.model.unit.status = \
             MaintenanceStatus("Render client properties")
-        ctx["client_opts"] = self._generate_client_properties()
+        client_opts = self._generate_client_properties()
         self.model.unit.status = \
             MaintenanceStatus("Render service override.conf")
         if self.distro == "apache_snap":
-            ctx["svc_opts"] = self.render_service_override_file(
+            svc_opts = self.render_service_override_file(
                 target="/etc/systemd/system/"
                        "{}.service.d/override.conf".format(self.service),
                 jmx_jar_folder="/snap/kafka/current/jar/",
                 jmx_file_name="/var/snap/kafka/common/prometheus.yaml")
         else:
-            ctx["svc_opts"] = self.render_service_override_file(
+            svc_opts = self.render_service_override_file(
                 target="/etc/systemd/system/"
                        "{}.service.d/override.conf".format(self.service))
-        ctx["keytab_opts"] = self.keytab_b64
-        ctx["log4j_config"] = self._render_kafka_log4j_properties()
+        # Reload service
+        daemon_reload()
+
+        log4j_opts = self._render_kafka_log4j_properties()
+
+        ctx = hashlib.md5(json.dumps({
+            "init_config": parent_config,
+            "server_opts": server_opts,
+            "log4j_opts": log4j_opts,
+            "svc_opts": svc_opts,
+            "client_opts": client_opts,
+            "keytab_opts": self.keytab_b64,
+            "certificates": {
+                "ssl_crt": self.get_ssl_cert(),
+                "ssl_key": self.get_ssl_key(),
+                "ssl_ks": self.get_ssl_keystore(),
+                "ssl_ts": self.get_ssl_truststore(),
+                "zk_crt": self.get_zk_cert(),
+                "zk_key": self.get_zk_key(),
+                "zk_ks": self.get_zk_keystore(),
+                "zk_ts": self.get_zk_truststore(),
+            }
+        }).encode('utf-8')).hexdigest()
 
         # 5) Restart Strategy
         # Now, service is operational. Restart service with an event to
-        # avoid any conflicts wth other running units.
+        # avoid any conflicts with other running units.
         self.model.unit.status = \
             MaintenanceStatus("Building context...")
         logger.debug("Context: {}, saved state is: {}".format(
-            ctx, self.ctx))
+            ctx, self.ks.config_state))
 
         if self._check_if_ready_to_start(ctx):
             self.on.restart_event.emit(ctx, services=self.services)
@@ -1233,6 +1201,7 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
             self.model.unit.status = \
                 BlockedStatus("Service not running that "
                               "should be: {}".format(self.services))
+        self.ks.config_state = ctx
 
 
 if __name__ == "__main__":

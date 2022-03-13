@@ -1,6 +1,8 @@
 # Copyright 2021 pguimaraes
 # See LICENSE file for licensing details.
 
+"""Unit test for Kafka broker charm."""
+
 import os
 import unittest
 import shutil
@@ -11,23 +13,25 @@ import base64
 from ops.testing import Harness
 import charm as charm
 import cluster as cluster
-import charmhelpers.fetch.ubuntu as ubuntu
 
-import wand.contrib.java as java
+# Setting it to "ubuntu" to keep compatibility with the
+# original library from charmhelpers, which had fetch.
+import charms.kafka_broker.v0.charmhelper as ubuntu
+
+import charms.kafka_broker.v0.java_class as java
 from nrpe.client import NRPEClient
 
-import wand.apps.relations.kafka_relation_base as kafka_relation_base
+import charms.kafka_broker.v0.kafka_relation_base as kafka_relation_base
 
-from unit_tests.config_files import SERVER_PROPS, SERVER_PROPS_LISTENERS
+from tests.unit.config_files import SERVER_PROPS, SERVER_PROPS_LISTENERS
 
-import wand.apps.kafka as kafka
-import wand.security as security
+import charms.kafka_broker.v0.kafka_base_class as kafka
+import charms.kafka_broker.v0.kafka_security as security
+import charms.zookeeper.v0.zookeeper as zookeeper
 
-from wand.apps.relations.tls_certificates import (
-    TLSCertificateRequiresRelation,
-)
+import interface_tls_certificates.ca_client as ca_client
 
-import wand.apps.relations.kafka_listener as kafka_listener
+import charms.kafka_broker.v0.kafka_listener as kafka_listener
 
 TO_PATCH_LINUX = [
     "userAdd",
@@ -48,6 +52,8 @@ TO_PATCH_HOST = [
 
 
 class MockEvent(object):
+    """Mock event."""
+
     def __init__(self, relations):
         self._relations = relations
 
@@ -113,6 +119,8 @@ class TestCharm(unittest.TestCase):
         for p in TO_PATCH_HOST:
             self._patch(charm, p)
 
+    @patch.object(charm, "daemon_reload")
+    @patch.object(shutil, "chown")
     @patch.object(shutil, "which")
     @patch.object(os, "makedirs")
     @patch.object(charm, "OpsCoordinator")
@@ -124,6 +132,10 @@ class TestCharm(unittest.TestCase):
                   'binding_addr', new_callabl=PropertyMock)
     @patch.object(cluster.KafkaBrokerCluster,
                   'binding_addr', new_callable=PropertyMock)
+    @patch.object(zookeeper.ZookeeperRequiresRelation,
+                  'advertise_addr', new_callable=PropertyMock)
+    @patch.object(zookeeper.ZookeeperRequiresRelation,
+                  'binding_addr', new_callabl=PropertyMock)
     @patch.object(kafka_listener, 'get_hostname')
     @patch.object(cluster, 'get_hostname')
     @patch.object(kafka_relation_base, 'CreateTruststore')
@@ -144,17 +156,21 @@ class TestCharm(unittest.TestCase):
     @patch.object(java, "genRandomPassword")
     @patch.object(charm, "genRandomPassword")
     # Those two patches set _cert_relation_set + get_ssl* as empty
-    @patch.object(TLSCertificateRequiresRelation, "get_server_certs")
-    @patch.object(TLSCertificateRequiresRelation, "request_server_cert")
+    @patch.object(ca_client.CAClient, "_get_certs_and_keys")
+    @patch.object(ca_client.CAClient, "root_ca_chain", new_callable=PropertyMock)
+    @patch.object(ca_client.CAClient, "ca_certificate", new_callable=PropertyMock)
+    @patch.object(ca_client.CAClient, "request_server_certificate")
     @patch.object(charm, "PKCS12CreateKeystore")
     @patch.object(charm.KafkaBrokerCharm, "create_data_and_log_dirs")
     @patch.object(kafka.KafkaJavaCharmBase, "install_packages")
     @patch.object(charm.KafkaBrokerCharm, "set_folders_and_permissions")
     @patch.object(kafka.KafkaJavaCharmBase, "create_log_dir")
     @patch.object(kafka, "render")
+    @patch.object(kafka, "render_from_string")
     @patch.object(charm, "render")
     def test_config_changed(self,
                             mock_render,
+                            mock_kafka_render_string,
                             mock_kafka_class_render,
                             mock_create_log_dir,
                             mock_folders_perms,
@@ -162,6 +178,8 @@ class TestCharm(unittest.TestCase):
                             mock_create_dirs,
                             mock_create_jks,
                             mock_request_server_cert,
+                            mock_ca_certificate,
+                            mock_root_ca_chain,
                             mock_get_server_certs,
                             mock_gen_random_pwd,
                             mock_java_gen_random_pwd,
@@ -180,13 +198,17 @@ class TestCharm(unittest.TestCase):
                             mock_rel_base_create_ts,
                             mock_get_hostname,
                             mock_list_get_hostname,
+                            mock_zk_binding_addr,
+                            mock_zk_advertise_addr,
                             mock_cluster_binding_addr,
                             mock_list_binding_addr,
                             mock_cluster_advertise_addr,
                             mock_list_advertise_addr,
                             mock_ops_coordinator,
                             mock_os_makedirs,
-                            mock_shutil_which):
+                            mock_shutil_which,
+                            mock_shutil_chown,
+                            mock_daemon_reload):
         """Test configuration changed with a cluster + 1x unit ZK.
         Use certificates passed via options and this is leader unit.
         Check each of the properties generated using mock_render.
@@ -247,8 +269,6 @@ class TestCharm(unittest.TestCase):
             "replication-factor": 3,
             "customize-failure-domain": False,
             "generate-root-ca": False,
-            "service-restart-on-fail": True,
-            "generate-root-ca": False,
             "log4j-root-logger": "DEBUG, stdout, kafkaAppender"
         })
         harness.set_leader(True)
@@ -278,7 +298,7 @@ class TestCharm(unittest.TestCase):
         # certificate events, then cluster-* will be deferred.
         # Run reemit to ensure they are run.
         kafka.framework.reemit()
-        args, kwargs = mock_render.call_args_list[-2]
+        args, kwargs = mock_render.call_args_list[-3]
         # Check server.properties rendering
         server_properties = SERVER_PROPS.split("\n")
         server_properties.sort()
@@ -317,6 +337,8 @@ class TestCharm(unittest.TestCase):
                 'zookeeper.ssl.truststore.password': 'confluentkeystorepass'}}
         )
 
+    @patch.object(charm, "daemon_reload")
+    @patch.object(shutil, "chown")
     @patch.object(shutil, "which")
     @patch.object(os, "makedirs")
     @patch.object(charm, "OpsCoordinator")
@@ -328,6 +350,10 @@ class TestCharm(unittest.TestCase):
                   'binding_addr', new_callabl=PropertyMock)
     @patch.object(cluster.KafkaBrokerCluster,
                   'binding_addr', new_callable=PropertyMock)
+    @patch.object(zookeeper.ZookeeperRequiresRelation,
+                  'advertise_addr', new_callable=PropertyMock)
+    @patch.object(zookeeper.ZookeeperRequiresRelation,
+                  'binding_addr', new_callabl=PropertyMock)
     @patch.object(kafka_listener, 'get_hostname')
     @patch.object(cluster, 'get_hostname')
     @patch.object(kafka_relation_base, 'CreateTruststore')
@@ -348,17 +374,21 @@ class TestCharm(unittest.TestCase):
     @patch.object(java, "genRandomPassword")
     @patch.object(charm, "genRandomPassword")
     # Those two patches set _cert_relation_set + get_ssl* as empty
-    @patch.object(TLSCertificateRequiresRelation, "get_server_certs")
-    @patch.object(TLSCertificateRequiresRelation, "request_server_cert")
+    @patch.object(ca_client.CAClient, "_get_certs_and_keys")
+    @patch.object(ca_client.CAClient, "root_ca_chain", new_callable=PropertyMock)
+    @patch.object(ca_client.CAClient, "ca_certificate", new_callable=PropertyMock)
+    @patch.object(ca_client.CAClient, "request_server_certificate")
     @patch.object(charm, "PKCS12CreateKeystore")
     @patch.object(charm.KafkaBrokerCharm, "create_data_and_log_dirs")
     @patch.object(kafka.KafkaJavaCharmBase, "install_packages")
     @patch.object(charm.KafkaBrokerCharm, "set_folders_and_permissions")
     @patch.object(kafka.KafkaJavaCharmBase, "create_log_dir")
     @patch.object(kafka, "render")
+    @patch.object(kafka, "render_from_string")
     @patch.object(charm, "render")
     def test_config_listene(self,
                             mock_render,
+                            mock_kafka_render_string,
                             mock_kafka_class_render,
                             mock_create_log_dir,
                             mock_folders_perms,
@@ -366,6 +396,8 @@ class TestCharm(unittest.TestCase):
                             mock_create_dirs,
                             mock_create_jks,
                             mock_request_server_cert,
+                            mock_ca_certificate,
+                            mock_root_ca_chain,
                             mock_get_server_certs,
                             mock_gen_random_pwd,
                             mock_java_gen_random_pwd,
@@ -384,13 +416,17 @@ class TestCharm(unittest.TestCase):
                             mock_rel_base_create_ts,
                             mock_get_hostname,
                             mock_list_get_hostname,
+                            mock_zk_binding_addr,
+                            mock_zk_advertise_addr,
                             mock_cluster_binding_addr,
                             mock_list_binding_addr,
                             mock_cluster_advertise_addr,
                             mock_list_advertise_addr,
                             mock_ops_coordinator,
                             mock_os_makedirs,
-                            mock_shutil_which):
+                            mock_shutil_which,
+                            mock_shutil_chown,
+                            mock_daemon_reload):
         """Test configuration changed with a cluster + 1x unit ZK.
         Use certificates passed via options and this is leader unit.
         Add listener relations with 2x applications but no SASL.
@@ -451,8 +487,6 @@ class TestCharm(unittest.TestCase):
             "replication-factor": 3,
             "customize-failure-domain": False,
             "generate-root-ca": False,
-            "service-restart-on-fail": True,
-            "generate-root-ca": False,
             "log4j-root-logger": "DEBUG, stdout, kafkaAppender"
         })
         harness.set_leader(True)
@@ -505,7 +539,7 @@ class TestCharm(unittest.TestCase):
         # certificate events, then cluster-* will be deferred.
         # Run reemit to ensure they are run.
         kafka.framework.reemit()
-        args, kwargs = mock_render.call_args_list[-2]
+        args, kwargs = mock_render.call_args_list[-3]
         # Check server.properties rendering
         server_properties = SERVER_PROPS_LISTENERS.split("\n")
         server_properties.sort()

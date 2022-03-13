@@ -6,8 +6,27 @@ upload-keytab:
     juju ssh kafka-broker/0 -- hostname -f    
     Command should be similar to:
     juju run-action --wait <unit> upload-keytab keytab="$(cat KEYTAB_FILE | base64 -w0)"
-    params:
-      keytab:
-        type: string
-        description: base64-encoded of keytab file content
-    required: [keytab]
+  properties:
+    keytab:
+      type: string
+      description: base64-encoded of keytab file content
+  required: [keytab]
+add-certificates:
+  description: |
+    Add certificates stored in PEM format from a comma-separated list of cert files.
+    This action manages a "to-add" list of CAs that will be trusted across the unit.
+    These certificates will be added as trusted across all the truststores of the unit.
+  properties:
+    cert-files:
+      type: string
+      description: comma-separated list of cerificate files in PEM format
+remove-certificates:
+  description: |
+    Remove certificates from the global list of certs to be trusted.
+  properties:
+    cert-files:
+      type: string
+      description: comma-separated list of cerificate files in PEM format
+list-certificates:
+  description: |
+    Lists all the extra CAs that are being trusted.
