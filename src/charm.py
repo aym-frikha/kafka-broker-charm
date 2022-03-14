@@ -207,18 +207,18 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         binding address.
         """
 
-        if bind_name == "internal-listener" and len(self.ks.internal_listener)>0:
+        if bind_name == "internal-listener" and len(self.ks.internal_listener or "")>0:
             # There is already an address defined, return it.
             return self.ks.internal_listener
-        elif bind_name == "external-listener" and len(self.ks.external_listener)>0:
+        elif bind_name == "external-listener" and len(self.ks.external_listener or "")>0:
             # Likewise, there is an external listener address already defined
             return self.ks.external_listener
 
         addr = get_address_in_network(self.config["{}-network".format(bind_name)])
         bind_addr = self.model.get_binding(bind_name).network.ingress_address \
-            if ingress else self.model.get_binding(bind_name).network.advertise_address
-        lst_addr = self.listener.ingress_address \
-            if ingress else self.listener.advertise_address
+            if ingress else self.model.get_binding(bind_name).network.bind_address
+        lst_addr = self.listener.binding_addr \
+            if ingress else self.listener.advertise_addr
         # Check if addr or the binding is equal to "listener" binding
         # If that is the case, then try to use the binding
         if addr == lst_addr and bind_addr == lst_addr:
@@ -387,11 +387,13 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
             self._cert_relation_set(None, r)
         # For the listener, not only request the certificate but pass
         # the additional IPs from extra-bindings/options if available
+        extra_sans = []
+        if self._reconcile_extra_biding("internal-listener", ingress=True):
+            extra_sans.append(self._reconcile_extra_biding("internal-listener", ingress=True))
+        if self._reconcile_extra_biding("external-listener", ingress=False):
+            extra_sans.append(self._reconcile_extra_biding("external-listener", ingress=False))
         self._cert_relation_set(None, self.listener,
-                                extra_sans=[
-                                    self._reconcile_extra_biding("internal-listener", ingress=True),
-                                    self._reconcile_extra_biding("external-listener", ingress=False)
-                                ])
+                                extra_sans=extra_sans)
         self._on_config_changed(event)
 
     def on_certificates_relation_changed(self, event):
