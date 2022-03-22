@@ -8,7 +8,7 @@ options:
       Only two values possible: apache or confluent. Defines if will use apache kafka
       or confluent distro to install kafka packages. Both distro and version
       should be set.
-  confluent_license_topic:                    
+  confluent_license_topic:
     default: "_confluent-license"
     type: string
     description: |
@@ -256,12 +256,12 @@ options:
     type: string
     description: |
       Key to be used in base64
-  user: 
+  user:
     default: 'cp-kafka'
     type: string
     description: |
       User set for kafka broker services
-  group: 
+  group:
     default: 'confluent'
     type: string
     description: |
@@ -273,7 +273,7 @@ options:
       Listeners 'internal', 'external' and 'controller' are set by default.
       Format:
         <listener-name>:  <IP / FQDN>:PORT
-        <listener-name2>: endpoint:port 
+        <listener-name2>: endpoint:port
         ...
     default: ''
   listener-sasl-protocol:
@@ -312,7 +312,7 @@ options:
     type: int
     default: 3
     description: |
-      Number of replicas to be distributed across brokers or AZs. 
+      Number of replicas to be distributed across brokers or AZs.
       Charm will block if replication-factor > num brokers / AZs
   internal-cluster-domain:
     type: string
@@ -416,7 +416,7 @@ options:
       zookeeper.connection.timeout.ms: 18000
       confluent.support.metrics.enable: true
       confluent.support.customer.id: anonymous
-  jmx_exporter_version: 
+  jmx_exporter_version:
     default: "0.12.0"
     type: string
     description: |
@@ -427,17 +427,17 @@ options:
     description: |
       Maven's URL from where JMX jar can be downloaded.
       Replace the version value with "{}" for the versions.
-  jmx-exporter-port: 
+  jmx-exporter-port:
     default: 9404
     type: int
     description: |
       Port to be exposed by the exporter for prometheus.
-  jmx_exporter_labels: 
+  jmx_exporter_labels:
     default: ""
     type: string
     description: |
       Comma-separated list of key=value tags.
-  jmx_exporter_use_internal: 
+  jmx_exporter_use_internal:
     default: false
     type: boolean
     description: |
@@ -452,3 +452,8 @@ options:
       hostname would be something like: juju-myservice-0 If you're running
       multiple environments with the same services in them this allows you
       to differentiate between them.
+  acl-enabled:
+    type: boolean
+    description: |
+      Enable Kafka Acls with zookeeper.
+

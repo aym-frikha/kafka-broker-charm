@@ -767,6 +767,12 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
                                   self.config.get("cluster-count")))
             return
         server_props["inter.broker.listener.name"] = "BROKER"
+        # Enable Kafka acls
+        if self.config.get("acl-enabled"):
+            server_props["authorizer.class.name"] = "kafka.security.authorizer.AclAuthorizer"
+            server_props["ssl.principal.mapping.rules"] = "RULE:^CN=([a-zA-Z.0-9@-]+).*$/$1/,DEFAULT"
+            server_props["super.users"] = "User:" + str(self.cluster.binding_addr)
+
 
         # Last configs: set replication factors
         server_props["transaction.state.log.min.isr"] = \
