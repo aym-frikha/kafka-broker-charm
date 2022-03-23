@@ -4,8 +4,6 @@
 
 import logging
 import os
-from tkinter import W
-from wsgiref.simple_server import WSGIRequestHandler
 import yaml
 import json
 import hashlib
