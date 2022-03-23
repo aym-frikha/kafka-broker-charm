@@ -4,6 +4,8 @@
 
 import logging
 import os
+from tkinter import W
+from wsgiref.simple_server import WSGIRequestHandler
 import yaml
 import json
 import hashlib
@@ -983,7 +985,8 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
                 self.config.get("authorizer-class-name", "")
 
         server_props["zookeeper.connect"] = self.zk.get_zookeeper_list
-        server_props["zookeeper.set.acl"] = str(self.config.get("acl-enabled", "False"))
+        if not self.config.get("acl-enabled"):
+            server_props["zookeeper.set.acl"] = str(self.config.get("acl-enabled", "False"))
 
         try:
             if self.zk.is_TLS_enabled():
