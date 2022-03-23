@@ -773,7 +773,8 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
             server_props["ssl.principal.mapping.rules"] = "RULE:^CN=([a-zA-Z.0-9@-]+).*$/$1/,DEFAULT"
             super_user_list = ["User:" + str(self.cluster.binding_addr)]
             super_user_list.extend(["User:" + str(p) for p in self.cluster.peer_addresses])
-            super_user_list.append("User:" + str(self.framework.model.relations["certificates"][0].data[list(self.framework.model.relations['certificates'][0].units)[0]]["ingress-address"]))
+            if len(self.framework.model.relations["certificates"]) > 0 and len(list(self.framework.model.relations['certificates'][0].units)) > 0:
+                super_user_list.append("User:" + str(self.framework.model.relations["certificates"][0].data[list(self.framework.model.relations['certificates'][0].units)[0]]["ingress-address"]))
             server_props["super.users"] = ";".join(super_user_list)
 
 
