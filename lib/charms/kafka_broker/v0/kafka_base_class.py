@@ -66,6 +66,7 @@ import shutil
 import subprocess
 import logging
 import yaml
+import json
 import socket
 
 import pwd
@@ -119,6 +120,8 @@ from nrpe.client import NRPEClient
 from charms.kafka_broker.v0.charmhelper import (
     open_port
 )
+
+from charms.kafka_broker.v0.kafka_storage_manager import StorageManager, StorageManagerError
 
 logger = logging.getLogger(__name__)
 
@@ -439,6 +442,35 @@ class KafkaJavaCharmBase(JavaCharmBase):
         self.keytab_b64 = ""
         self.services = [self.service]
         self.JMX_EXPORTER_JAR_FOLDER = "/opt/prometheus/"
+        # Initiates the StorageManager
+        self.sm = StorageManager(self)
+        # Set the user and group if available as configs
+        if "user" in self.config:
+            self.sm.set_default_user(self.config["user"], mandatory=True)
+        if "group" in self.config:
+            self.sm.set_default_group(self.config["group"], mandatory=True)
+
+    def manage_volumes(self):
+        """Mounts / umounts volumes according to config option: log-dir.
+
+        If log-dir is not present in self.config, log a warning and return.
+        """        
+        if "log-dir" not in self.config:
+            logger.warn(
+                "log-dir config not found, manage_volumes returning,"
+                " nothing done")
+            return
+        logdir = self.config.get("log-dir", [])
+        if isinstance(logdir, str):
+            logdir = json.loads(self.config.get("log-dir", '[]'))
+        if isinstance(logdir, dict):
+            # If this is just
+            logdir = [logdir]
+        try:
+            self.sm.manage_volumes(logdir)
+        except StorageManagerError as e:
+            # Error happened when mounting a volume, mount it as a charm:
+            raise KafkaCharmBaseConfigNotAcceptedError(e.msg)
 
     def on_update_status(self, event):
         """ This method will update the status of the charm according

@@ -55,39 +55,47 @@ WIP: "apache" distro is not yet available.
 
 Some types of services of kafka demands directories to store data, such as kafka brokers, ksqldb and, in Confluent case, Confluent Center.
 
-There are some options on how to configure the folders correctly for your service. First option is to use charm configs. That allows to either specify existing folders or folder + disks, in which the disk
-will zapped with a new filesystem and mounted to the folder. Dedicating a disk is optional, one can also just specify a folder in the rootfs of your system.
-
-Here are some configuration examples:
-
-1) Just specify a folder to be created under rootfs and used as data in Kafka charm. In the example below, a filesystem will be specified as well, but that value will be ignored given a disk is not 
-passed as well.
-
+List of dictionaries where each entry represents a new folder to be used in log.dirs. The overall format expected is:
+```
+[
+    {
+        "fs_path": <PATH>,
+        "device": {
+            "name": <DEVICE_PATH>,
+            "filesystem": <OPTIONAL, FS_MODEL>,
+            "options": <OPTIONAL, FS_MOUNT_OPTIONS>
+        }, ## OPTIONAL
+    }, ...
+]
 ```
 
-kafka:
-  options:
-    data-log-dir: |
-      ext4: /data
-
+If only "fs_path" is specified, then the charm uses the rootfs and just creates the new folder. 
+Device section is optional and allows to pass a disk to be used when mounting the folder path.
+Within device section, "name" is mandatory and other fields are optional.
+Following config is valid, for example:
+```
+[
+    {
+        "fs_path": /data/1,
+    },
+    {
+        "fs_path": /data/2,
+        "device": {
+            "name": /dev/sdb,
+        },
+    },
+    {
+        "fs_path": /data/3,
+        "device": {
+            "name": /dev/sdc,
+            "filesystem": ext4,
+        }
+    }
+]
 ```
 
-2) Specify a folder and a device (vdc for /log and vdd for /data):
-
-```
-
-kafka:
-  options:
-    data-log-dir: |
-      ext4: /log
-      xfs: /data
-    data-log-device:
-      - /dev/vdc
-      - /dev/vdd
-
-```
-
-WIP: The last option is to use the storage backend provided by Juju. In that case, up to 32 disks can be specified, and they will be mounted as XFS and each directory will be named /data{1..32}.
+That will create 3x log.dirs for Kafka, where /data/1 will be placed on the same disk as the rootfs, /data/2 will be flushed with default filesystem (xfs) on /dev/sdb and /data/3 specifies more details of what the device should look like.
+Changing this configuration will trigger the charm to mount & format a device / umount any devices that were changed in the list.
 
 WARNING: For production scenarios, it is recommended to use dedicated disks for data.
 

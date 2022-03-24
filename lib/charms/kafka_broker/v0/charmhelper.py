@@ -30,6 +30,7 @@ __all__ = [
     "apt_update",
     "apt_install",
     "mount",
+    "umount",
     "add_source",
     "GPGKeyError",
     "get_address_in_network"
@@ -366,6 +367,9 @@ def fstab_add(dev, mp, fs, options=None):
     """Adds the given device entry to the /etc/fstab file"""
     return Fstab.add(dev, mp, fs, options=options)
 
+def fstab_remove(mp):
+    """Remove the given mountpoint entry from /etc/fstab"""
+    return Fstab.remove_by_mountpoint(mp)
 
 def mount(device, mountpoint, options=None, persist=False, filesystem="ext3"):
     """Mount a filesystem at a particular mountpoint"""
@@ -381,6 +385,18 @@ def mount(device, mountpoint, options=None, persist=False, filesystem="ext3"):
 
     if persist:
         return fstab_add(device, mountpoint, filesystem, options=options)
+    return True
+
+def umount(mountpoint, persist=False):
+    """Unmount a filesystem"""
+    cmd_args = ['umount', mountpoint]
+    try:
+        subprocess.check_output(cmd_args)
+    except subprocess.CalledProcessError as e:
+        return False
+
+    if persist:
+        return fstab_remove(mountpoint)
     return True
 
 

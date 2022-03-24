@@ -62,6 +62,8 @@ from ops_coordinator.ops_coordinator import (
     OpsCoordinator
 )
 
+from charms.kafka_broker.v0.kafka_storage_manager import StorageManager, StorageManagerError
+
 logger = logging.getLogger(__name__)
 
 # Given: https://docs.confluent.io/current/ \
@@ -232,7 +234,6 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         else:
             self.ks.external_listener = addr
         return addr
-
 
     def _manage_listener_certs(self):
         """Manages the certificates between cluster and listener relations.
@@ -617,27 +618,8 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
             # Override prometheus jar file
             self.JMX_EXPORTER_JAR_FOLDER = \
                 "/snap/kafka/current/jar/"
-
         # Install packages will install snap in this case
         super().install_packages('openjdk-11-headless', packages)
-
-        # The logic below avoid an error such as more than one entry
-        # In this case, we will pick the first entry
-        data_log_fs = \
-            list(yaml.safe_load(
-                     self.config.get("data-log-dir", "")).items())[0][0]
-        data_log_dir = \
-            list(yaml.safe_load(
-                     self.config.get("data-log-dir", "")).items())[0][1]
-        # Create the log folders.
-        self.create_log_dir(self.config["data-log-device"],
-                            data_log_dir,
-                            data_log_fs,
-                            self.config.get("user",
-                                            "cp-kafka"),
-                            self.config.get("group",
-                                            "confluent"),
-                            self.config.get("fs-options", None))
         self._on_config_changed(event)
 
     def _check_if_ready_to_start(self, ctx):
@@ -721,9 +703,7 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
            len(self.get_license_topic()) > 0 and \
            self.distro == "confluent":
             server_props["confluent.license"] = self.get_license_topic()
-        server_props["log.dirs"] = \
-            list(yaml.safe_load(
-                     self.config.get("data-log-dir", "")).items())[0][1]
+        server_props["log.dirs"] = ",".join(self.sm.lst_volumes())
         logger.info("Selected {} for "
                     "log.dirs".format(server_props["log.dirs"]))
 
@@ -1145,11 +1125,11 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         """Do the configuration change.
 
         1) Check if kerberos and ZK is available
-        2) Generate the Keystores
-        3) Manage AZs
-        4) Generate the config files
-        5) Restart strategy
-        6) Open ports
+        2) Manage the volumes
+        3) Generate the Keystores
+        4) Manage AZs
+        5) Generate the config files
+        6) Restart strategy
         """
         logger.debug("EVENT DEBUG: _on_config_changed called"
                      " for event: {}".format(event))
@@ -1178,17 +1158,21 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
             self.model.unit.status = \
                 BlockedStatus("Waiting for Zookeeper")
             return
-        # 2) Generate Keystores
+
+        # 2) Manage the volumes
+        self.manage_volumes()
+
+        # 3) Generate Keystores
         self.model.unit.status = \
             MaintenanceStatus("Starting to generate certs and keys")
         self._generate_keystores()
         self.model.unit.status = \
             MaintenanceStatus("Render server.properties")
-        # 3) Manage AZs
+        # 4) Manage AZs
         self.cluster.enable_az = self.config.get(
             "customize-failure-domain", False)
 
-        # 4) Generate the config files
+        # 5) Generate the config files
         try:
             server_opts = self._generate_server_properties(event)
         except KafkaRelationBaseNotUsedError:
@@ -1237,7 +1221,7 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
             }
         }).encode('utf-8')).hexdigest()
 
-        # 5) Restart Strategy
+        # 6) Restart Strategy
         # Now, service is operational. Restart service with an event to
         # avoid any conflicts with other running units.
         self.model.unit.status = \

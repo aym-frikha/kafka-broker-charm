@@ -353,29 +353,54 @@ options:
     default: |
       default.api.timeout.ms: 20000
       request.timeout.ms: 20000
-  data-log-device:
+  log-dir:
     type: string
-    default: ""
+    default: '[
+      {
+          "fs_path": "/var/lib/kafka_data"
+      }
+    ]'
     description: |
-      Device to be used to store the data-log folder.
-      This value cannot be changed post deployment of a unit.
-      If unset, the folder will be created directly on the rootfs
-  fs-options:
-    type: string
-    description: |
-      Filesystem options for data-*-dir options.
-      This value cannot be changed post deployment of a unit.
-  data-log-dir:
-    type: string
-    default: |
-      ext4: /var/lib/kafka_data
-    description: |
-      The list must be in the forme of:
-      log.dirs: |
-        <fs-type>: <folder-path>
-      Only the first folder will be taken into consideration. The <fs-type> is used by the charm
-      if log-device is also set.
-      The folders in this option will form the log.dirs
+      List of dictionaries where each entry represents a new folder to be used in log.dirs.
+      The overall format expected is:
+      [
+          {
+              "fs_path": <PATH>,
+              "device": {
+                  "name": <DEVICE_PATH>,
+                  "filesystem": <OPTIONAL, FS_MODEL>,
+                  "options": <OPTIONAL, FS_MOUNT_OPTIONS>
+              }, ## OPTIONAL
+          }, ...
+      ]
+      If only "fs_path" is specified, then the charm uses the rootfs and just creates the new
+      folder. 
+      Device section is optional and allows to pass a disk to be used when mounting the folder path.
+      Within device section, "name" is mandatory and other fields are optional.
+      Following config is valid, for example:
+      [
+          {
+              "fs_path": /data/1,
+          },
+          {
+              "fs_path": /data/2,
+              "device": {
+                  "name": /dev/sdb,
+              },
+          },
+          {
+              "fs_path": /data/3,
+              "device": {
+                  "name": /dev/sdc,
+                  "filesystem": ext4,
+              }
+          }
+      ]
+      That will create 3x log.dirs for Kafka, where /data/1 will be placed on the same disk as the rootfs,
+      /data/2 will be flushed with default filesystem (xfs) on /dev/sdb and /data/3 specifies more details
+      of what the device should look like.
+      Changing this configuration will trigger the charm to mount & format a device / umount any devices that
+      were changed in the list.
   log4j-root-logger:
     type: string
     default: "INFO, stdout, kafkaAppender"

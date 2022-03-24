@@ -33,6 +33,8 @@ import interface_tls_certificates.ca_client as ca_client
 
 import charms.kafka_broker.v0.kafka_listener as kafka_listener
 
+import charms.kafka_broker.v0.kafka_storage_manager as storage_manager
+
 TO_PATCH_LINUX = [
     "userAdd",
     "groupAdd"
@@ -120,6 +122,7 @@ class TestCharm(unittest.TestCase):
             self._patch(charm, p)
 
     @patch.object(charm, "daemon_reload")
+    @patch.object(storage_manager, "userAdd")
     @patch.object(shutil, "chown")
     @patch.object(shutil, "which")
     @patch.object(os, "makedirs")
@@ -210,6 +213,7 @@ class TestCharm(unittest.TestCase):
                             mock_os_makedirs,
                             mock_shutil_which,
                             mock_shutil_chown,
+                            mock_user_add,
                             mock_daemon_reload):
         """Test configuration changed with a cluster + 1x unit ZK.
         Use certificates passed via options and this is leader unit.
@@ -341,6 +345,7 @@ class TestCharm(unittest.TestCase):
         )
 
     @patch.object(charm, "daemon_reload")
+    @patch.object(storage_manager, "userAdd")
     @patch.object(shutil, "chown")
     @patch.object(shutil, "which")
     @patch.object(os, "makedirs")
@@ -431,6 +436,7 @@ class TestCharm(unittest.TestCase):
                             mock_os_makedirs,
                             mock_shutil_which,
                             mock_shutil_chown,
+                            mock_user_add,
                             mock_daemon_reload):
         """Test configuration changed with a cluster + 1x unit ZK.
         Use certificates passed via options and this is leader unit.
