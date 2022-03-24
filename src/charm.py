@@ -747,6 +747,16 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
                                   self.config.get("cluster-count")))
             return
         server_props["inter.broker.listener.name"] = "BROKER"
+        # Enable Kafka acls
+        if self.config.get("acl-enabled"):
+            server_props["authorizer.class.name"] = "kafka.security.authorizer.AclAuthorizer"
+            server_props["ssl.principal.mapping.rules"] = "RULE:^CN=([a-zA-Z.0-9@-]+).*$/$1/,DEFAULT"
+            super_user_list = ["User:" + str(self.cluster.binding_addr)]
+            super_user_list.extend(["User:" + str(p) for p in self.cluster.peer_addresses])
+            if len(self.framework.model.relations["certificates"]) > 0 and len(list(self.framework.model.relations['certificates'][0].units)) > 0:
+                super_user_list.append("User:" + str(self.framework.model.relations["certificates"][0].data[list(self.framework.model.relations['certificates'][0].units)[0]]["ingress-address"]))
+            server_props["super.users"] = ";".join(super_user_list)
+
 
         # Last configs: set replication factors
         server_props["transaction.state.log.min.isr"] = \
@@ -953,7 +963,8 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
                 self.config.get("authorizer-class-name", "")
 
         server_props["zookeeper.connect"] = self.zk.get_zookeeper_list
-        server_props["zookeeper.set.acl"] = self.zk.is_sasl_enabled()
+        if not self.config.get("acl-enabled"):
+            server_props["zookeeper.set.acl"] = str(self.config.get("acl-enabled", "False"))
 
         try:
             if self.zk.is_TLS_enabled():
