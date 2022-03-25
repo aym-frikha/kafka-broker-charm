@@ -479,6 +479,7 @@ options:
       to differentiate between them.
   acl-enabled:
     type: boolean
+    default: false
     description: |
       Enable Kafka Acls with zookeeper.
 

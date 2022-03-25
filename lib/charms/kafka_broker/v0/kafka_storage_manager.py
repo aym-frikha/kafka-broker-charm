@@ -307,8 +307,8 @@ class StorageManager(Object):
         shutil.chown(vol["fs_path"], user=user, group=group)
         # If the device is present, then mount it
         if "device" in vol:
-            fs = d["filesystem"] if "filesystem" in d else self.sm.config["default_fs"]
             d = vol["device"]
+            fs = d["filesystem"] if "filesystem" in d else self.sm.config["default_fs"]
             cmd = ["mkfs", "-t", fs, d["name"]]
             subprocess.check_call(cmd)
             mount(

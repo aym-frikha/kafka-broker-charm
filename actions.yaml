@@ -26,17 +26,22 @@ remove-certificates:
   properties:
     cert-files:
       type: string
-      description: comma-separated list of cerificate files in PEM format
+      description: comma-separated list of certificate files in PEM format
 list-certificates:
   description: |
     Lists all the extra CAs that are being trusted.
 set-rack-id:
   description: |
     Sets the rack.id information for this unit. If this action is run, it will take precedence
-    over customize-failure or Juju's own AZ information.
+    over customize-failure-domain or Juju's own AZ information.
     This action is useful for deployments that do not have juju AZ info.
   properties:
     rack:
       type: string
-      description: 
+      description: |
+        Rack name to be used as AZ.
+    trigger-restart:
+      type: boolean
+      default: false
+      description: Trigger the restart immediately instead of waiting to render the config
   required: [rack]

@@ -316,6 +316,11 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
 
     def set_rack_id_action(self, event):
         self.ks.rack_id=event.params["rack"]
+        if event.params.get("trigger-restart", False):
+            self._generate_server_properties(event)
+            service_restart(self.service)
+        else:
+            self._on_config_changed(event)
 
     def on_upload_keytab_action(self, event):
         """Implement the keytab action upload."""
