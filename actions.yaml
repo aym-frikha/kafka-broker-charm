@@ -30,3 +30,13 @@ remove-certificates:
 list-certificates:
   description: |
     Lists all the extra CAs that are being trusted.
+set-rack-id:
+  description: |
+    Sets the rack.id information for this unit. If this action is run, it will take precedence
+    over customize-failure or Juju's own AZ information.
+    This action is useful for deployments that do not have juju AZ info.
+  properties:
+    rack:
+      type: string
+      description: 
+  required: [rack]

@@ -300,21 +300,23 @@ class StorageManager(Object):
             # This is only to check if the user already exists, if so, there
             # is nothing else to do, move along
             pass
+        # Get the filesystem
         # Create the folder
         # Let it fail if folder already exists
         os.makedirs(vol["fs_path"], 0o750, exist_ok=True)
         shutil.chown(vol["fs_path"], user=user, group=group)
         # If the device is present, then mount it
         if "device" in vol:
+            fs = d["filesystem"] if "filesystem" in d else self.sm.config["default_fs"]
             d = vol["device"]
-            cmd = ["mkfs", "-t", d["filesystem"], d["name"]]
+            cmd = ["mkfs", "-t", fs, d["name"]]
             subprocess.check_call(cmd)
             mount(
                 d["name"],
                 vol["fs_path"],
                 options=d.get("options", None),
                 persist=True,
-                filesystem=d["filesystem"],
+                filesystem=fs,
             )
 
     def _validate_volume_schema(self, vol):
@@ -332,8 +334,6 @@ class StorageManager(Object):
         if "fs_path" not in vol:
             return False
         # Device may not be requested for an specific entry
-        if "device" in vol and (
-            "name" not in vol["device"] or "filesystem" not in vol["device"]
-        ):
+        if "device" in vol and "name" not in vol["device"]:
             return False
         return True

@@ -66,7 +66,6 @@ import shutil
 import subprocess
 import logging
 import yaml
-import json
 import socket
 
 import pwd
@@ -462,7 +461,7 @@ class KafkaJavaCharmBase(JavaCharmBase):
             return
         logdir = self.config.get("log-dir", [])
         if isinstance(logdir, str):
-            logdir = json.loads(self.config.get("log-dir", '[]'))
+            logdir = yaml.safe_load(self.config.get("log-dir", '[]'))
         if isinstance(logdir, dict):
             # If this is just
             logdir = [logdir]

@@ -146,6 +146,8 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
                                self.remove_certificates_action)
         self.framework.observe(self.on.list_certificates_action,
                                self.list_certificates_action)
+        self.framework.observe(self.on.set_rack_id_action,
+                               self.set_rack_id_action)
 
         self.cluster = KafkaBrokerCluster(self, 'cluster',
                                           self.config.get("cluster-count", 3))
@@ -165,6 +167,7 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         self.ks.set_default(endpoints=[])
         self.ks.set_default(internal_listener="")
         self.ks.set_default(external_listener="")
+        self.ks.set_default(rack_id="")
         # LMA integrations
         self.prometheus = \
             KafkaJavaCharmBasePrometheusMonitorNode(
@@ -306,10 +309,13 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
     def remove_certificates_action(self, event):
         """Removes CAs from ks.ssl_certs and regenerates truststores."""
         super().remove_certificates_action(event.params["cert-files"])
-        self._manag_listener_certs()
+        self._manage_listener_certs()
 
     def list_certificates_action(self, event):
         return super().list_certificates_action()
+
+    def set_rack_id_action(self, event):
+        self.ks.rack_id=event.params["rack"]
 
     def on_upload_keytab_action(self, event):
         """Implement the keytab action upload."""
@@ -707,7 +713,9 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         logger.info("Selected {} for "
                     "log.dirs".format(server_props["log.dirs"]))
 
-        if (os.environ.get("JUJU_AVAILABILITY_ZONE", None) and
+        if len(self.ks.rack_id) > 0:
+            server_props["broker.rack"] = self.ks.rack_id
+        elif (os.environ.get("JUJU_AVAILABILITY_ZONE", None) and
                 self.config.get("customize-failure-domain", False)):
             server_props["broker.rack"] = \
                 os.environ.get("JUJU_AVAILABILITY_ZONE")
