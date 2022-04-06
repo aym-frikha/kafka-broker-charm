@@ -558,7 +558,7 @@ class KafkaJavaCharmBase(JavaCharmBase):
 
         Recovers all the certs from cert_files."""
         certs = []
-        for crt in cert_files:
+        for crt in cert_files if isinstance(cert_files,list) else [cert_files]:
             with open(crt) as f:
                 certs.append("".join(f.readlines()))
         return certs
