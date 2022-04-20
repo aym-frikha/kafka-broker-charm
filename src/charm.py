@@ -63,7 +63,7 @@ from ops_coordinator.ops_coordinator import (
 )
 
 from charms.kafka_broker.v0.kafka_storage_manager import StorageManager, StorageManagerError
-
+from charms.kafka_broker.v0.kafka_linux import get_hostname
 logger = logging.getLogger(__name__)
 
 # Given: https://docs.confluent.io/current/ \
@@ -656,11 +656,11 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
 
     def get_ssl_cert(self):
         """Get the certificate from the option or relation."""
-        return self._get_ssl_cert(self.listener.binding_addr)
+        return self._get_ssl_cert(get_hostname(self.listener.binding_addr))
 
     def get_ssl_key(self):
         """Get the key from the option or relation."""
-        return self._get_ssl_key(self.listener.binding_addr)
+        return self._get_ssl_key(get_hostname(self.listener.binding_addr))
 
     def get_ssl_keystore(self):
         """Get the keystore."""
@@ -685,12 +685,12 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
     def get_zk_cert(self):
         """Get the certificate from the option or relation."""
         return self._get_ssl_cert(
-                   self.zk.binding_addr, "ssl-zk-cert", "ssl-zk-key")
+                   get_hostname(self.zk.binding_addr), "ssl-zk-cert", "ssl-zk-key")
 
     def get_zk_key(self):
         """Get the key from the option or relation."""
         return self._get_ssl_key(
-                   self.zk.binding_addr, "ssl-zk-cert", "ssl-zk-key")
+                   get_hostname(self.zk.binding_addr), "ssl-zk-cert", "ssl-zk-key")
 
     def get_oauth_token_cert(self):
         """Get OAUTH token certificate."""
@@ -764,10 +764,10 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         if self.config.get("acl-enabled"):
             server_props["authorizer.class.name"] = "kafka.security.authorizer.AclAuthorizer"
             server_props["ssl.principal.mapping.rules"] = "RULE:^CN=([a-zA-Z.0-9@-]+).*$/$1/,DEFAULT"
-            super_user_list = ["User:" + str(self.cluster.binding_addr)]
-            super_user_list.extend(["User:" + str(p) for p in self.cluster.peer_addresses])
+            super_user_list = ["User:" + str(get_hostname(self.cluster.binding_addr))]
+            super_user_list.extend(["User:" + str(get_hostname(p)) for p in self.cluster.peer_addresses])
             if len(self.framework.model.relations["certificates"]) > 0 and len(list(self.framework.model.relations['certificates'][0].units)) > 0:
-                super_user_list.append("User:" + str(self.framework.model.relations["certificates"][0].data[list(self.framework.model.relations['certificates'][0].units)[0]]["ingress-address"]))
+                super_user_list.append("User:" + str(get_hostname(self.framework.model.relations["certificates"][0].data[list(self.framework.model.relations['certificates'][0].units)[0]]["ingress-address"])))
             server_props["super.users"] = ";".join(super_user_list)
 
 

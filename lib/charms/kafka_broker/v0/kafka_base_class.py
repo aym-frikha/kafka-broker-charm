@@ -893,7 +893,7 @@ class KafkaJavaCharmBase(JavaCharmBase):
                 # Common name is always CN as this is the element
                 # that organizes the cert order from tls-certificates
                 self.certificates.request_server_certificate(
-                    common_name=rel.binding_addr,
+                    common_name=rel.hostname,
                     sans=sans)
             logger.info("Either certificates "
                         "relation not ready or not set")
