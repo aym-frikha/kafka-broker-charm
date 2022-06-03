@@ -400,6 +400,8 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         # For the listener, not only request the certificate but pass
         # the additional IPs from extra-bindings/options if available
         extra_sans = []
+        if self.config['extra_sans'] and not extra_sans == "":
+            extra_sans.extend(self.config['extra_sans'].split(" "))
         if self._reconcile_extra_biding("internal-listener", ingress=True):
             extra_sans.append(self._reconcile_extra_biding("internal-listener", ingress=True))
         if self._reconcile_extra_biding("external-listener", ingress=False):
