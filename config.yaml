@@ -17,7 +17,9 @@ options:
     default: '6.1'
     type: string
     description: |
-      Sets the kafka version for the given distro.
+      Sets the kafka version for the given distro. For Confluent, set the version of confluent
+      packages to be installed.
+      For apache_snap, choose the channel to be deployed, e.g. "3.1/stable" or "3.0/edge".
   cluster-count:
     default: 3
     type: int

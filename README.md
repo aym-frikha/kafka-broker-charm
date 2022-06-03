@@ -6,7 +6,7 @@ Kafka Broker Charm is the baremetal charm for Confluent Kafka.
 
 Get a Kafka cluster automated and manage its lifecycle with Juju and charms.
 
-## Usage
+## Setup
 
 See ```config.yaml``` for the full list of options and descriptions.
 
@@ -270,3 +270,40 @@ For that, the charm code must specify a list of lists, each sub-list contain met
         # Call the method from JavaCharmBase
         super()._generate_keystores(ks)
 ```
+## Operations
+
+### Charm Upgrade
+
+Run the ```juju upgrade-charm````command to trigger the unit's upgrade.
+
+The charm upgrade runs a config-changed.
+
+### Application Upgrade
+
+The upgrade of an application unit is always triggered manually, using ```upgrade``` action.
+
+The user must first either choose a new version of the application to be upgrade as follows:
+
+```
+  # Upgrade from 3.0 -> 3.1 with Snaps
+  $ juju config kafka version="3.1/stable" # selected a new channel
+
+  # Upgrade 6.1 -> 7.0 with Confluent
+  $ juju config kafka version="7.0" # selected new package repo
+```
+
+Once the channel has been chosen, run the upgrade action:
+
+```
+$ juju run-action --wait kafka/<unit> upgrade
+```
+
+For snaps, upgrade is only possible on:
+* resources: only if you add more resources
+* version option: when moving the option to the next step.
+
+There is no checks for versions, so a downgrade is also possible.
+
+The upgrade action will trigger a restart of the application.
+
+ATTENTION: Confluent package upgrades is still experimental.

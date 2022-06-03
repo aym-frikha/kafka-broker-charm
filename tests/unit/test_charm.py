@@ -122,6 +122,7 @@ class TestCharm(unittest.TestCase):
             self._patch(charm, p)
 
     @patch.object(charm, "daemon_reload")
+    @patch.object(charm, "get_hostname")
     @patch.object(storage_manager, "userAdd")
     @patch.object(shutil, "chown")
     @patch.object(shutil, "which")
@@ -214,6 +215,7 @@ class TestCharm(unittest.TestCase):
                             mock_shutil_which,
                             mock_shutil_chown,
                             mock_user_add,
+                            mock_charm_get_hostname,
                             mock_daemon_reload):
         """Test configuration changed with a cluster + 1x unit ZK.
         Use certificates passed via options and this is leader unit.
@@ -345,6 +347,7 @@ class TestCharm(unittest.TestCase):
         )
 
     @patch.object(charm, "daemon_reload")
+    @patch.object(charm, 'get_hostname')
     @patch.object(storage_manager, "userAdd")
     @patch.object(shutil, "chown")
     @patch.object(shutil, "which")
@@ -437,6 +440,7 @@ class TestCharm(unittest.TestCase):
                             mock_shutil_which,
                             mock_shutil_chown,
                             mock_user_add,
+                            mock_charm_get_hostname,
                             mock_daemon_reload):
         """Test configuration changed with a cluster + 1x unit ZK.
         Use certificates passed via options and this is leader unit.

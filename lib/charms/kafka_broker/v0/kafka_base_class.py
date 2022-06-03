@@ -186,6 +186,19 @@ KRB5_CONF = """[libdefaults]
   {{ realm|lower() }} = {{ realm|upper() }}""" # noqa
 
 
+def calculate_resource_checksum(resource):
+    """Calculates a checksum for a resource"""
+    import hashlib
+
+    md5 = hashlib.md5()
+    path = hookenv.resource_get(resource)
+    if path:
+        with open(path, "rb") as f:
+            data = f.read()
+        md5.update(data)
+    return md5.hexdigest()
+
+
 class KafkaJavaCharmBasePrometheusMonitorNode(BasePrometheusMonitor):
     """Prometheus Monitor node issues a request for prometheus2 to
     setup a scrape job against its address.
@@ -414,6 +427,16 @@ class KafkaJavaCharmBase(JavaCharmBase):
         their own method to load each of the three types above.
         """
         return self.config.get("distro", "confluent").lower()
+
+    def restart(self):
+        """Restarts the services. Should be defined by the final classes"""
+        pass
+
+    def do_upgrade(self, event):
+        """Runs the upgrade action by rerunning installation"""
+        self._on_install(event)
+        self._on_config_changed(event)
+        self.restart()
 
     def _get_service_name(self):
         """To be overloaded: returns the name of the Kafka service this
@@ -646,7 +669,7 @@ class KafkaJavaCharmBase(JavaCharmBase):
         """
         return "kafka"
 
-    def install_packages(self, java_version, packages, snap_connect=None):
+    def install_packages(self, java_version, packages, snap_connect=None, masked_services=None):
         """Install the packages/snaps related to the chosen distro.
 
         Args:
@@ -654,7 +677,12 @@ class KafkaJavaCharmBase(JavaCharmBase):
         packages: package list to be installed
         snap_connect: interfaces that need to be explicitly connected if snap
                       option is chosen instead.
+        masked_services: list of service names to be masked before installing the packages.
+                         This is useful for snaps, where several services are installed at once
         """
+
+        for s in (masked_services or []):
+            subprocess.check_output(["sudo", "systemctl", "mask", s])
 
         MaintenanceStatus("Installing packages")
         version = self.config.get("version", self.LATEST_VERSION_CONFLUENT)

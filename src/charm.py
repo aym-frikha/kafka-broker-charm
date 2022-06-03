@@ -137,6 +137,9 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
                                self.on_listeners_relation_changed)
         self.framework.observe(self.on.restart_event,
                                self.on_restart_event)
+        self.framework.observe(self.on.upgrade_action, self.do_upgrade)
+        self.framework.observe(self.on.upgrade_charm, self._on_config_changed)
+
         self.framework.observe(self.on.upload_keytab_action,
                                self.on_upload_keytab_action)
         # Certificate management methods
@@ -189,6 +192,10 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         # List of listeners to be passed via relation if restart is
         # successful
         self.listener_info = None
+
+    def restart(self):
+        """Restarts the service."""
+        service_restart(self.service)
 
     def __del__(self):
         """Ensure coordinator will release any locks."""
@@ -632,7 +639,11 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
             self.JMX_EXPORTER_JAR_FOLDER = \
                 "/snap/kafka/current/jar/"
         # Install packages will install snap in this case
-        super().install_packages('openjdk-11-headless', packages)
+        # In the case specific of kafka snap, the zookeeper is also installed but we
+        # are not interested on running that.
+        super().install_packages(
+            'openjdk-11-headless', packages,
+            masked_services=["snap.kafka.zookeeper"])
         self._on_config_changed(event)
 
     def _check_if_ready_to_start(self, ctx):

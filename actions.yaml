@@ -45,3 +45,8 @@ set-rack-id:
       default: false
       description: Trigger the restart immediately instead of waiting to render the config
   required: [rack]
+upgrade:
+    description: | 
+      Upgrade the kafka packages or snaps.
+      When executed, this action will, potentially, remove old packages/snaps and install the new
+      version, then executing a config-changed.
