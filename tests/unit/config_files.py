@@ -1,4 +1,5 @@
 SERVER_PROPS="""group.initial.rebalance.delay.ms=3000
+inter.broker.protocol.version=2.7
 log.retention.check.interval.ms=300000
 log.retention.hours=168
 log.segment.bytes=1073741824
@@ -53,6 +54,7 @@ zookeeper.ssl.truststore.password=confluentkeystorepass
 """ # noqa
 
 SERVER_PROPS_LISTENERS="""group.initial.rebalance.delay.ms=3000
+inter.broker.protocol.version=2.7
 log.retention.check.interval.ms=300000
 log.retention.hours=168
 log.segment.bytes=1073741824

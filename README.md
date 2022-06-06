@@ -280,6 +280,15 @@ The charm upgrade runs a config-changed.
 
 ### Application Upgrade
 
+#### Important Information
+
+Confluent package upgrade is still EXPERIMENTAL.
+
+Charms work with Kafka 3.0+, which means, log.message.format.version is not set.
+More details: https://kafka.apache.org/documentation/#upgrade
+
+#### How-to upgrade Kafka
+
 The upgrade of an application unit is always triggered manually, using ```upgrade``` action.
 
 The user must first either choose a new version of the application to be upgrade as follows:
@@ -304,6 +313,4 @@ For snaps, upgrade is only possible on:
 
 There is no checks for versions, so a downgrade is also possible.
 
-The upgrade action will trigger a restart of the application.
-
-ATTENTION: Confluent package upgrades is still experimental.
+The upgrade action will trigger an immediate restart of the application.

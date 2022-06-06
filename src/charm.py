@@ -84,6 +84,14 @@ CONFLUENT_PACKAGES = [
   "confluent-security",
 ]
 
+# https://docs.confluent.io/platform/current/installation/upgrade.html#steps-for-upgrading-to-version-x
+CONFLUENT_TO_APACHE_VERSION = {
+  "7.1": "3.1",
+  "7.0": "3.0",
+  "6.2": "2.8",
+  "6.1": "2.7"
+}
+
 
 class KafkaBrokerCharmMDSNotSupportedError(Exception):
     """Exception raised when MDS relation is but distro is not confluent."""
@@ -137,7 +145,8 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
                                self.on_listeners_relation_changed)
         self.framework.observe(self.on.restart_event,
                                self.on_restart_event)
-        self.framework.observe(self.on.upgrade_action, self.do_upgrade)
+        self.framework.observe(self.on.prepare_upgrade_action, self.do_upgrade)
+        self.framework.observe(self.on.commit_upgrade_action, self.commit_upgrade)
         self.framework.observe(self.on.upgrade_charm, self._on_config_changed)
 
         self.framework.observe(self.on.upload_keytab_action,
@@ -171,6 +180,7 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         self.ks.set_default(internal_listener="")
         self.ks.set_default(external_listener="")
         self.ks.set_default(rack_id="")
+        self.ks.set_default(current_version="")
         # LMA integrations
         self.prometheus = \
             KafkaJavaCharmBasePrometheusMonitorNode(
@@ -196,6 +206,18 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
     def restart(self):
         """Restarts the service."""
         service_restart(self.service)
+
+    def commit_upgrade(self, event):
+        """Do the upgrade. Upgrade is the only moment current version will changed."""
+        if self.config.get("install_method") == "archive" or self.distro == "confluent":
+            self.ks.current_version = CONFLUENT_TO_APACHE_VERSION[self.config["version"]]
+        elif self.distro == "apache":
+            self.ks.current_version = self.config["version"]
+        elif self.distro == "apache_snap":
+            self.ks.current_version = self.config["version"].split("/")[0]
+        # Second config change and restart
+        self._on_config_changed(event)
+        self.restart()
 
     def __del__(self):
         """Ensure coordinator will release any locks."""
@@ -625,19 +647,23 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         if self.config.get("install_method") == "archive":
             # TODO: implement the tarball installation
             self._install_tarball()
+            self.ks.current_version = CONFLUENT_TO_APACHE_VERSION[self.config["version"]]
         elif self.distro == "confluent" or self.distro == "apache":
             # Both confluent and apache install via packages.
             if self.distro == "confluent":
                 packages = CONFLUENT_PACKAGES + ['libsystemd-dev']
+                self.ks.current_version = CONFLUENT_TO_APACHE_VERSION[self.config["version"]]
             else:
                 # TODO: implement apache / package installation
                 raise Exception("Not Implemented Yet")
+                self.ks.current_version = self.config["version"]
         elif self.distro == "apache_snap":
             # Install via snaps, either the resource attached to the charm
             # or from snapstore.
             # Override prometheus jar file
             self.JMX_EXPORTER_JAR_FOLDER = \
                 "/snap/kafka/current/jar/"
+            self.ks.current_version = self.config["version"].split("/")[0]
         # Install packages will install snap in this case
         # In the case specific of kafka snap, the zookeeper is also installed but we
         # are not interested on running that.
@@ -772,7 +798,11 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
                               " come up". format(
                                   self.config.get("cluster-count")))
             return
+
+        # Setup inter broker data
         server_props["inter.broker.listener.name"] = "BROKER"
+        server_props["inter.broker.protocol.version"] = self.ks.current_version
+
         # Enable Kafka acls
         if self.config.get("acl-enabled"):
             server_props["authorizer.class.name"] = "kafka.security.authorizer.AclAuthorizer"
@@ -821,8 +851,9 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
             # In case LDAP is configured, MDS endpoints need to be shared.
             # Publish the endpoints to the cluster units:
             cluster_data = self.cluster.relation.data
-            cluster_data[self.unit]["mds_url"] = \
-                server_props["confluent.metadata.server.advertised.listeners"]
+            if self.distro == "confluent":
+                cluster_data[self.unit]["mds_url"] = \
+                    server_props["confluent.metadata.server.advertised.listeners"]
             # Now read each of the units' in the cluster relation
             # Inform listener requirers of MDS endpoint
             self.listener.set_mds_endpoint(
@@ -832,7 +863,7 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
                 self.config["mds_user"], self.config["mds_password"]
             )
             # Finish MDS configuration
-            if len(self.get_ssl_keystore()) > 0:
+            if len(self.get_ssl_keystore()) > 0 and self.distro == "confluent":
                 server_props["confluent.metadata."
                              "server.ssl.key.password"] = self.ks.ks_password
                 server_props["confluent.metadata."
@@ -847,7 +878,7 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
                 server_props["confluent.metadata."
                              "server.ssl.truststore.password"] = \
                     self.ks.ts_password
-            if self.config["oauth-token-verify"]:
+            if self.config["oauth-token-verify"] and self.distro == "confluent":
                 server_props["confluent.metadata.server.token.auth.enable"] = \
                     self.config["oauth-token-verify"]
                 server_props["confluent.metadata.server.public.key.path"] = \

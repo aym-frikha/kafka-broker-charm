@@ -45,8 +45,15 @@ set-rack-id:
       default: false
       description: Trigger the restart immediately instead of waiting to render the config
   required: [rack]
-upgrade:
+prepare-upgrade:
     description: | 
       Upgrade the kafka packages or snaps.
       When executed, this action will, potentially, remove old packages/snaps and install the new
-      version, then executing a config-changed.
+      version, then execute a config-changed.
+      Should be run broker-by-broker.
+commit-upgrade:
+    description: |
+      Apply the upgrade to the broker unit by running "commit-upgrade". That will move the
+      inter-broker version to the new current version, generate the server.properties and restart
+      the unit once again.
+      Should be run broker-by-broker.
