@@ -682,7 +682,7 @@ class KafkaJavaCharmBase(JavaCharmBase):
         """
 
         for s in (masked_services or []):
-            subprocess.check_output(["sudo", "systemctl", "mask", s])
+            subprocess.check_output(["sudo", "systemctl", "--global", "mask", s])
 
         MaintenanceStatus("Installing packages")
         version = self.config.get("version", self.LATEST_VERSION_CONFLUENT)
