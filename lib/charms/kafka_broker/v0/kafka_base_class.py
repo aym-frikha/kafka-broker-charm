@@ -329,7 +329,7 @@ class KafkaJavaCharmBaseNRPEMonitoring(Object):
             check_name = "check_{}_{}".format(
                 self.model.unit.name.replace("/", "_"), s)
             self.nrpe.add_check(command=[
-                '/usr/lib/nagios/plugins/check_systemd', s
+                '/usr/local/lib/nagios/plugins/check_systemd.py', s
             ], name=check_name)
         # Deal with endpoints: need to separate the endpoints
         for e in self.endpoints:

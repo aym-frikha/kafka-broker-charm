@@ -482,4 +482,10 @@ options:
     default: false
     description: |
       Enable Kafka Acls with zookeeper.
+  extra_sans:
+    type: string
+    default: ""
+    description: |
+      Space-separated list of extra SAN entries to add to the x509 certificate
+      created for the brokers.
 
