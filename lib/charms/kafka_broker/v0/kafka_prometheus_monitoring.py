@@ -214,6 +214,15 @@ class RelationManagerBase(Object):
             result = True
         return result
 
+    def get_app(self, field):
+        """Gets the app-level data for field or return None if not found."""
+        if not self.relations:
+            return None
+        for r in self.relations:
+            if field in r.data[self.app]:
+                return r.data[self.app][field]
+        return None
+
 
 class BasePrometheusMonitor(RelationManagerBase):
 
@@ -356,9 +365,15 @@ class BasePrometheusMonitor(RelationManagerBase):
     # Keeping it for compatibility with other charms
     def request(self, job_name, ca_cert=None, job_data=None):
         # Job name as field and value the json describing it
-        req_uuid = str(uuid.uuid4())
+        # Check first if we already have an existing request_id
+        req_uuid = self.get_app("request_id") or str(uuid.uuid4())
         job_data["request_id"] = req_uuid
+        # Setting as app-level data so another unit can recover later
         self.send("request_" + req_uuid, job_data)
+        # Request has been submitted, save the request_id on the app-level
+        # so it can be recovered the next time.
+        # If the value already exists, no change will happen.
+        self.send("request_id", req_uuid, is_app=True)
 
     def on_prometheus_relation_joined(self, event):
         """Set the advertise address of each unit in the peer relation.
