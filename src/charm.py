@@ -662,7 +662,7 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
             # or from snapstore.
             # Override prometheus jar file
             self.JMX_EXPORTER_JAR_FOLDER = \
-                "/snap/kafka/current/jar/"
+                "/snap/kafka/current/"
             self.ks.current_version = self.config["version"].split("/")[0]
         # Install packages will install snap in this case
         # In the case specific of kafka snap, the zookeeper is also installed but we
@@ -1261,7 +1261,7 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
                        "{}.service.d/override.conf".format(self.service),
                 jmx_jar_folder = \
                     "/opt/prometheus/" if self.distro != "apache_snap" \
-                    else "/snap/{}/current/jar/opt/kafka/extra/".format(self.snap),
+                    else "/snap/{}/current/opt/kafka/libs/".format(self.snap),
                 jmx_file_name="/var/snap/kafka/common/prometheus.yaml")
         else:
             svc_opts = self.render_service_override_file(
