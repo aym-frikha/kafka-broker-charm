@@ -8,7 +8,7 @@ bases:
         channel: "20.04"
 parts:
   charm:
-#    charm-python-packages: [pyOpenSSL, setuptools, pip]
+          #    charm-python-packages: [pyOpenSSL, setuptools, pip]
     charm-python-packages: [pip, markupsafe]
     build-packages:
       - git
