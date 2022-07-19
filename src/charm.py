@@ -801,7 +801,7 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
 
         # Setup inter broker data
         server_props["inter.broker.listener.name"] = "BROKER"
-        server_props["inter.broker.protocol.version"] = self.ks.current_version
+        server_props["inter.broker.protocol.version"] = self.config.get("protocol_version")
 
         # Enable Kafka acls
         if self.config.get("acl-enabled"):

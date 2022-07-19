@@ -20,6 +20,12 @@ options:
       Sets the kafka version for the given distro. For Confluent, set the version of confluent
       packages to be installed.
       For apache_snap, choose the channel to be deployed, e.g. "3.1/stable" or "3.0/edge".
+  protocol_version:
+    default: '3.1'
+    type: string
+    description: |
+      Sets the kafka protocol version for the current cluster. This needs to be changed carefully during
+      charm upgrade and kafka snap upgrade. 
   cluster-count:
     default: 3
     type: int
