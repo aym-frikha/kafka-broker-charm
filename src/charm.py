@@ -7,6 +7,7 @@ import os
 import yaml
 import json
 import hashlib
+import subprocess
 
 from ops.main import main
 from ops.model import (
@@ -143,12 +144,14 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
                                self.on_listeners_relation_joined)
         self.framework.observe(self.on.listeners_relation_changed,
                                self.on_listeners_relation_changed)
-        self.framework.observe(self.on.restart_event,
-                               self.on_restart_event)
+#        self.framework.observe(self.on.restart_event,
+#                               self.on_restart_event)
         self.framework.observe(self.on.prepare_upgrade_action, self.do_upgrade)
         self.framework.observe(self.on.commit_upgrade_action, self.commit_upgrade)
         self.framework.observe(self.on.upgrade_charm, self._on_config_changed)
 
+        self.framework.observe(self.on.hold_snap_action,
+                               self.on_hold_snap_action)
         self.framework.observe(self.on.upload_keytab_action,
                                self.on_upload_keytab_action)
         # Certificate management methods
@@ -362,6 +365,14 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
             return
         self._on_config_changed(event)
         event.set_results({"keytab": "Uploaded!"})
+
+    def on_hold_snap_action(self, event):
+        """Implement the hold snap action."""
+        if event.params.get("enable", True):
+            cmd='''echo 30 12 \* \* \* /usr/bin/snap set system refresh.hold=\"\$(/usr/bin/date --iso-8601=seconds -d \'+30 days\')\" | crontab -'''
+        else:
+            cmd='''crontab  -l | grep -v '/usr/bin/snap set system refresh.hold' | crontab -'''
+        return subprocess.check_call(cmd, shell=True)
 
     def on_restart_event(self, event):
         """Run the restart logic."""

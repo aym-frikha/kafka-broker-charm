@@ -57,3 +57,11 @@ commit-upgrade:
       inter-broker version to the new current version, generate the server.properties and restart
       the unit once again.
       Should be run broker-by-broker.
+hold-snap:
+  description: |
+    Hold snap refresh to prevent any service restart or change without charm control.
+  properties:
+    enable:
+      type: boolean
+      default: true
+  required: [enable]
