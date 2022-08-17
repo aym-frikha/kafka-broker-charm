@@ -822,6 +822,8 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
             super_user_list.extend(["User:" + str(get_hostname(p)) for p in self.cluster.peer_addresses])
             if len(self.framework.model.relations["certificates"]) > 0 and len(list(self.framework.model.relations['certificates'][0].units)) > 0:
                 super_user_list.append("User:" + str(get_hostname(self.framework.model.relations["certificates"][0].data[list(self.framework.model.relations['certificates'][0].units)[0]]["ingress-address"])))
+            if len(self.config["super-users"]) > 0:
+                super_user_list.extend([self.config["super-users"]])
             server_props["super.users"] = ";".join(super_user_list)
 
 
