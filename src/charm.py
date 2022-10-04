@@ -817,7 +817,7 @@ class KafkaBrokerCharm(KafkaJavaCharmBase):
         # Enable Kafka acls
         if self.config.get("acl-enabled"):
             server_props["authorizer.class.name"] = "kafka.security.authorizer.AclAuthorizer"
-            server_props["ssl.principal.mapping.rules"] = "RULE:^CN=([a-zA-Z.0-9@-]+).*$/$1/,DEFAULT"
+            server_props["ssl.principal.mapping.rules"] = self.config.get("mapping_rules")
             super_user_list = ["User:" + str(get_hostname(self.cluster.binding_addr))]
             super_user_list.extend(["User:" + str(get_hostname(p)) for p in self.cluster.peer_addresses])
             if len(self.framework.model.relations["certificates"]) > 0 and len(list(self.framework.model.relations['certificates'][0].units)) > 0:

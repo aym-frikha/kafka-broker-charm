@@ -496,4 +496,10 @@ options:
     description: |
       Space-separated list of extra SAN entries to add to the x509 certificate
       created for the brokers.
-
+  mapping_rules:
+    type: string
+    default: "RULE:^CN=([a-zA-Z.0-9@-]+).*$/$1/,DEFAULT"
+    description: |
+      A comma separated list of rules for mapping from distinguished name from the
+      client certificate to short name. The rules are evaluated in order and the
+      first rule that matches a principal name is used to map it to a short name.

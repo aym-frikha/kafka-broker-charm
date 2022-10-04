@@ -1,6 +1,6 @@
 # Copyright 2021 pguimaraes
 # See LICENSE file for licensing details.
-name: kafka-broker
+name: fe-staging-kafka-broker
 description: |
   Automate the deployment of a production-ready kafka
   cluster using either Apache or Confluent's distribution.
